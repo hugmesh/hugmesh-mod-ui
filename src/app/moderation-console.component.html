@@ -1,0 +1,485 @@
+<section class="hug-moderation-console" data-testid="moderation-console-view" aria-labelledby="mc-heading">
+  <h2 id="mc-heading">Moderation console</h2>
+
+  <!-- ── Moderation queue ──────────────────────────────────────────── -->
+  <h3 id="mc-queue-heading">Moderation queue</h3>
+
+  <!-- Status filter — surfaces the user-written self-silence-appeal rows as well
+       as the federation recommended/referred/approved/denied lifecycle. -->
+  <form class="mc-filter" (ngSubmit)="applyStatusFilter()" aria-labelledby="mc-queue-heading" novalidate>
+    <label for="mc-status">Filter by status</label>
+    <select
+      id="mc-status"
+      data-testid="mc-status"
+      [(ngModel)]="statusFilter"
+      name="status"
+      aria-describedby="mc-status-help"
+      (change)="applyStatusFilter()"
+    >
+      <option *ngFor="let f of statusFilters" [value]="f.value">{{ f.label }}</option>
+    </select>
+    <button data-testid="mc-status-apply" type="submit" aria-describedby="mc-status-help">Apply</button>
+    <span id="mc-status-help" class="field-help" data-testid="mc-status-help">
+      Narrows the queue below to one lifecycle stage; choose "all" to clear it, or
+      "self-silence appeals" to triage the appeals users filed against their own silence.
+      Changing the selection reloads the queue.
+    </span>
+  </form>
+
+  <table data-testid="mc-queue" aria-labelledby="mc-queue-heading">
+    <caption class="sr">Federation moderation queue: requester, kind, target, status, with a refer-to-admin action</caption>
+    <thead>
+      <tr>
+        <th scope="col">Requester</th>
+        <th scope="col">Kind</th>
+        <th scope="col">Target</th>
+        <th scope="col">Reason</th>
+        <th scope="col">Status</th>
+        <th scope="col"><span class="sr">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let r of queue()" [attr.data-request-id]="r.id">
+        <td>{{ r.requester }}</td>
+        <td>{{ r.kind }}</td>
+        <td>{{ r.target }}</td>
+        <td>{{ r.reason }}</td>
+        <td>{{ r.status }}</td>
+        <td class="mc-row-actions">
+          <!-- WIRED: refer/escalate up to an admin (the only mod removal path). -->
+          <button
+            type="button"
+            [attr.data-refer]="r.id"
+            [disabled]="r.status === 'referred'"
+            [attr.aria-label]="'Refer ' + r.kind + ' for ' + targetName(r) + ' up to an admin'"
+            [attr.aria-describedby]="'mc-refer-help-' + r.id"
+            (click)="refer(r.id)"
+          >refer to admin</button>
+          <span
+            [attr.id]="'mc-refer-help-' + r.id"
+            class="field-help"
+            [attr.data-refer-help]="r.id"
+          >Escalates this item to an administrator to decide — a moderator never decides directly. Disabled once already referred.</span>
+
+          <!-- ADMIN: real approve/deny, wired to admin-bff-api's decide proxy. -->
+          <ng-container *ngIf="isAdmin()">
+            <button
+              type="button"
+              [attr.data-approve]="r.id"
+              [disabled]="decidingIds().has(r.id)"
+              [attr.aria-describedby]="'mc-decide-help-' + r.id"
+              [attr.aria-label]="'Approve ' + r.kind + ' for ' + targetName(r)"
+              (click)="decide(r.id, true)"
+            >approve</button>
+            <button
+              type="button"
+              [attr.data-deny]="r.id"
+              [disabled]="decidingIds().has(r.id)"
+              [attr.aria-describedby]="'mc-decide-help-' + r.id"
+              [attr.aria-label]="'Deny ' + r.kind + ' for ' + targetName(r)"
+              (click)="decide(r.id, false)"
+            >deny</button>
+            <span
+              [attr.id]="'mc-decide-help-' + r.id"
+              class="field-help"
+              [attr.data-decide-help]="r.id"
+            >Approve records the request's kill-switch override and drops the target's modules from the manifest; Deny rearms it if a prior approve applied one.</span>
+          </ng-container>
+
+          <!-- MOD: DISABLED + helptext. Only an admin may decide. aria-disabled
+               (NOT native disabled) keeps it focusable so a screen reader lands on
+               it and announces the WHY-helptext. -->
+          <ng-container *ngIf="!isAdmin()">
+            <button
+              type="button"
+              [attr.data-decide]="r.id"
+              aria-disabled="true"
+              [attr.aria-describedby]="'mc-decide-help-' + r.id"
+              [attr.aria-label]="'Decide (approve or deny) ' + r.kind + ' for ' + targetName(r)"
+            >decide</button>
+            <span
+              [attr.id]="'mc-decide-help-' + r.id"
+              class="field-help"
+              [attr.data-decide-help]="r.id"
+            >Only an administrator can decide (approve or deny) a referral — and that decision is made here by an admin, or in the admin console. As a moderator, refer it up.</span>
+          </ng-container>
+        </td>
+      </tr>
+      <tr *ngIf="queue().length === 0">
+        <td colspan="6" data-testid="mc-queue-empty">The moderation queue is empty.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <span
+    *ngIf="decideError()"
+    id="mc-decide-error"
+    class="field-error"
+    data-testid="mc-decide-error"
+    role="alert"
+    aria-live="assertive"
+  >{{ decideError() }}</span>
+
+  <span
+    *ngIf="referError()"
+    id="mc-refer-error"
+    class="field-error"
+    data-testid="mc-refer-error"
+    role="alert"
+    aria-live="assertive"
+  >{{ referError() }}</span>
+
+  <!-- ── Recommend (mod→admin escalation) ──────────────────────────── -->
+  <h3 id="mc-recommend-heading">Recommend to an admin</h3>
+  <form (ngSubmit)="recommend()" aria-labelledby="mc-recommend-heading" aria-describedby="mc-rec-intro" novalidate>
+    <p class="intro" id="mc-rec-intro">
+      Record an instance-block or user-removal recommendation into the federation
+      queue. You recommend; an administrator decides — a moderator never removes
+      directly.
+    </p>
+
+    <label for="mc-rec-kind">Kind</label>
+    <select id="mc-rec-kind" data-testid="mc-rec-kind" [(ngModel)]="recommendKind" name="recKind" aria-describedby="mc-rec-kind-help">
+      <option *ngFor="let k of recommendKinds" [value]="k">{{ k }}</option>
+    </select>
+    <span id="mc-rec-kind-help" class="field-help" data-testid="mc-rec-kind-help">
+      Pick "instance-block" to recommend cutting off a whole remote server, or
+      "user-removal" to recommend removing a single account.
+    </span>
+
+    <label for="mc-rec-target">Target</label>
+    <input
+      id="mc-rec-target"
+      data-testid="mc-rec-target"
+      [(ngModel)]="recommendTarget"
+      name="recTarget"
+      placeholder="evil.example or @user:instance.example"
+      [attr.aria-invalid]="recommendError() ? 'true' : null"
+      [attr.aria-describedby]="recommendError() ? 'mc-rec-error' : 'mc-rec-target-help'"
+    />
+    <span id="mc-rec-target-help" class="field-help" data-testid="mc-rec-target-help">
+      For an instance-block enter the server domain (e.g. evil.example); for a
+      user-removal enter the full account (e.g. &#64;user:instance.example). Required.
+    </span>
+
+    <label for="mc-rec-reason">Reason</label>
+    <input id="mc-rec-reason" data-testid="mc-rec-reason" [(ngModel)]="recommendReason" name="recReason" placeholder="spam / abuse" aria-describedby="mc-rec-reason-help" />
+    <span id="mc-rec-reason-help" class="field-help" data-testid="mc-rec-reason-help">
+      Optional note for the deciding admin — a short justification such as "spam" or "abuse".
+    </span>
+
+    <button data-testid="mc-rec-submit" type="submit">Recommend</button>
+
+    <span
+      *ngIf="recommendError()"
+      id="mc-rec-error"
+      class="field-error"
+      data-testid="mc-rec-error"
+      role="alert"
+      aria-live="assertive"
+    >{{ recommendError() }}</span>
+    <span
+      *ngIf="recommendNote()"
+      class="block-note"
+      data-testid="mc-rec-note"
+      role="status"
+      aria-live="polite"
+    >{{ recommendNote() }}</span>
+  </form>
+
+  <!-- ── Ban / lift ────────────────────────────────────────────────── -->
+  <h3 id="mc-ban-heading">Ban / lift access</h3>
+  <form (ngSubmit)="ban()" aria-labelledby="mc-ban-heading" aria-describedby="mc-ban-intro" novalidate>
+    <p class="intro" id="mc-ban-intro">
+      Ban a user from a platform-access role. You cannot ban yourself or a
+      moderator/administrator (the server enforces this; a rejected attempt is
+      announced below). The effect is applied asynchronously by the reconcile loop.
+    </p>
+
+    <label for="mc-ban-platform">Platform</label>
+    <select id="mc-ban-platform" data-testid="mc-ban-platform" [(ngModel)]="banPlatform" name="banPlatform" aria-describedby="mc-ban-platform-help">
+      <option *ngFor="let p of banPlatforms" [value]="p">{{ p }}</option>
+    </select>
+    <span id="mc-ban-platform-help" class="field-help" data-testid="mc-ban-platform-help">
+      Which access the ban removes: "matrix" or "mastodon" social login, or "profile"
+      for the user's profile/account role.
+    </span>
+
+    <label for="mc-ban-target">Target user</label>
+    <input
+      id="mc-ban-target"
+      data-testid="mc-ban-target"
+      [(ngModel)]="banTarget"
+      name="banTarget"
+      placeholder="username / @user:instance.example"
+      [attr.aria-invalid]="banError() ? 'true' : null"
+      [attr.aria-describedby]="banError() ? 'mc-ban-error' : 'mc-ban-target-help'"
+    />
+    <span id="mc-ban-target-help" class="field-help" data-testid="mc-ban-target-help">
+      The user to ban or lift — a local username or a full &#64;user:instance.example
+      address. The same target is used by both Ban and Lift ban. Required.
+    </span>
+
+    <label for="mc-ban-ttl">TTL (seconds)</label>
+    <input
+      id="mc-ban-ttl"
+      data-testid="mc-ban-ttl"
+      [(ngModel)]="banTtlSeconds"
+      name="banTtl"
+      type="number"
+      min="1"
+      inputmode="numeric"
+      placeholder="blank = permanent"
+      aria-describedby="mc-ban-ttl-help"
+    />
+    <span id="mc-ban-ttl-help" class="field-help" data-testid="mc-ban-ttl-help">
+      Leave blank for a permanent ban; a positive value auto-restores access after that many seconds.
+    </span>
+
+    <label for="mc-ban-reason">Reason</label>
+    <input id="mc-ban-reason" data-testid="mc-ban-reason" [(ngModel)]="banReason" name="banReason" placeholder="abuse" aria-describedby="mc-ban-reason-help" />
+    <span id="mc-ban-reason-help" class="field-help" data-testid="mc-ban-reason-help">
+      Optional reason recorded in the audit trail (e.g. "abuse").
+    </span>
+
+    <button data-testid="mc-ban-submit" type="submit" aria-describedby="mc-ban-actions-help">Ban</button>
+    <button data-testid="mc-ban-lift" type="button" (click)="lift()" aria-describedby="mc-ban-actions-help">Lift ban</button>
+    <span id="mc-ban-actions-help" class="field-help" data-testid="mc-ban-actions-help">
+      "Ban" applies the ban above; "Lift ban" restores access for the same target user
+      and platform. Both take effect asynchronously and are reported below.
+    </span>
+
+    <span
+      *ngIf="banError()"
+      id="mc-ban-error"
+      class="field-error"
+      data-testid="mc-ban-error"
+      role="alert"
+      aria-live="assertive"
+    >{{ banError() }}</span>
+    <span
+      *ngIf="banNote()"
+      class="block-note"
+      data-testid="mc-ban-note"
+      role="status"
+      aria-live="polite"
+    >{{ banNote() }}</span>
+  </form>
+
+  <!-- ── Domain-lock (force local-only) ────────────────────────────── -->
+  <h3 id="mc-domainlock-heading">Domain-lock (force local-only)</h3>
+  <form (ngSubmit)="domainLock()" aria-labelledby="mc-domainlock-heading" aria-describedby="mc-dl-intro" novalidate>
+    <p class="intro" id="mc-dl-intro">
+      Force a user local-only on Matrix or Mastodon — they keep their access but
+      their traffic stops federating. This is an additive marker; remove it to
+      restore federation. You cannot domain-lock yourself or a privileged user.
+    </p>
+
+    <label for="mc-dl-role">Platform</label>
+    <select id="mc-dl-role" data-testid="mc-dl-role" [(ngModel)]="domainLockRole" name="dlRole" aria-describedby="mc-dl-role-help">
+      <option *ngFor="let r of domainLockRoles" [value]="r.value">{{ r.label }}</option>
+    </select>
+    <span id="mc-dl-role-help" class="field-help" data-testid="mc-dl-role-help">
+      The platform on which the user is forced local-only — their posts stop
+      federating there but they keep their account.
+    </span>
+
+    <label for="mc-dl-user">Target user</label>
+    <input
+      id="mc-dl-user"
+      data-testid="mc-dl-user"
+      [(ngModel)]="domainLockUser"
+      name="dlUser"
+      placeholder="username / @user:instance.example"
+      [attr.aria-invalid]="domainLockError() ? 'true' : null"
+      [attr.aria-describedby]="domainLockError() ? 'mc-dl-error' : 'mc-dl-user-help'"
+    />
+    <span id="mc-dl-user-help" class="field-help" data-testid="mc-dl-user-help">
+      The user to lock or unlock — a local username or full &#64;user:instance.example
+      address. The same target is used by both Domain-lock and Remove lock. Required.
+    </span>
+
+    <label for="mc-dl-reason">Reason</label>
+    <input id="mc-dl-reason" data-testid="mc-dl-reason" [(ngModel)]="domainLockReason" name="dlReason" placeholder="evasion" aria-describedby="mc-dl-reason-help" />
+    <span id="mc-dl-reason-help" class="field-help" data-testid="mc-dl-reason-help">
+      Optional reason recorded in the audit trail (e.g. "evasion").
+    </span>
+
+    <button data-testid="mc-dl-lock" type="submit" aria-describedby="mc-dl-actions-help">Domain-lock</button>
+    <button data-testid="mc-dl-unlock" type="button" (click)="domainUnlock()" aria-describedby="mc-dl-actions-help">Remove lock</button>
+    <span id="mc-dl-actions-help" class="field-help" data-testid="mc-dl-actions-help">
+      "Domain-lock" adds the local-only marker; "Remove lock" clears it to restore
+      federation. Both take effect asynchronously and are reported below.
+    </span>
+
+    <span
+      *ngIf="domainLockError()"
+      id="mc-dl-error"
+      class="field-error"
+      data-testid="mc-dl-error"
+      role="alert"
+      aria-live="assertive"
+    >{{ domainLockError() }}</span>
+    <span
+      *ngIf="domainLockNote()"
+      class="block-note"
+      data-testid="mc-dl-note"
+      role="status"
+      aria-live="polite"
+    >{{ domainLockNote() }}</span>
+  </form>
+
+  <!-- ── Server-wide block form ────────────────────────────────────── -->
+  <h3 id="mc-block-heading">Server-wide block</h3>
+  <form (ngSubmit)="block()" aria-labelledby="mc-block-heading" aria-describedby="mc-block-intro" novalidate>
+    <p class="intro" id="mc-block-intro">
+      Apply a server-wide block on Matrix or Mastodon, against a single user or a whole
+      remote instance. This calls the platform's homeserver admin and is always recorded
+      in the audit trail below.
+    </p>
+
+    <label for="mc-platform">Platform</label>
+    <select id="mc-platform" data-testid="mc-platform" [(ngModel)]="platform" name="platform" aria-describedby="mc-platform-help">
+      <option *ngFor="let p of platforms" [value]="p">{{ p }}</option>
+    </select>
+    <span id="mc-platform-help" class="field-help" data-testid="mc-platform-help">
+      The network the block applies to: Matrix or Mastodon.
+    </span>
+
+    <label for="mc-scope">Scope</label>
+    <select id="mc-scope" data-testid="mc-scope" [(ngModel)]="scope" name="scope" aria-describedby="mc-scope-help">
+      <option *ngFor="let s of scopes" [value]="s">{{ s }}</option>
+    </select>
+    <span id="mc-scope-help" class="field-help" data-testid="mc-scope-help">
+      "user" blocks one account; "instance" blocks an entire remote server and everyone on it.
+    </span>
+
+    <label for="mc-target">Target</label>
+    <input
+      id="mc-target"
+      data-testid="mc-target"
+      [(ngModel)]="target"
+      name="target"
+      placeholder="@user:instance.example or instance.example"
+      [attr.aria-invalid]="blockError() ? 'true' : null"
+      [attr.aria-describedby]="blockError() ? 'mc-block-error' : 'mc-target-help'"
+    />
+    <span id="mc-target-help" class="field-help" data-testid="mc-target-help">
+      For a user scope enter the full account (e.g. &#64;user:instance.example); for an
+      instance scope enter the server domain (e.g. instance.example). Required.
+    </span>
+
+    <label for="mc-reason">Reason</label>
+    <input id="mc-reason" data-testid="mc-reason" [(ngModel)]="reason" name="reason" placeholder="abuse" aria-describedby="mc-reason-help" />
+    <span id="mc-reason-help" class="field-help" data-testid="mc-reason-help">
+      Optional reason recorded in the audit trail (e.g. "abuse").
+    </span>
+
+    <button data-testid="mc-block" type="submit">Block</button>
+
+    <span
+      *ngIf="blockError()"
+      id="mc-block-error"
+      class="field-error"
+      data-testid="mc-block-error"
+      role="alert"
+      aria-live="assertive"
+    >{{ blockError() }}</span>
+
+    <span
+      *ngIf="blockNote()"
+      class="block-note"
+      data-testid="mc-block-note"
+      role="status"
+      aria-live="polite"
+    >{{ blockNote() }}</span>
+  </form>
+
+  <!-- ── Administrator-only actions (DISABLED + helptext, no mod endpoint) ── -->
+  <h3 id="mc-admin-only-heading">Administrator-only actions</h3>
+  <p class="intro">
+    These actions have no moderator endpoint — they are shown here so the boundary
+    is explicit. Each is disabled but keeps keyboard focus so the reason is read out.
+  </p>
+  <ul class="mc-admin-only" aria-labelledby="mc-admin-only-heading">
+    <li>
+      <!-- General role grant/revoke: NO endpoint anywhere — role assignment happens
+           at Casdoor via the reconcile loop, never as a direct UI grant. -->
+      <button
+        type="button"
+        data-testid="mc-role-grant-disabled"
+        aria-disabled="true"
+        aria-describedby="mc-role-grant-help"
+      >Grant / revoke a role</button>
+      <span id="mc-role-grant-help" class="field-help" data-testid="mc-role-grant-help">
+        Granting or revoking a role is not a moderator action and has no endpoint — role assignment is handled by an administrator through the identity provider.
+      </span>
+    </li>
+    <li>
+      <!-- External-client GRANT: external-client roles are user owner-scoped
+           self-service in user-bff; neither mod-bff nor admin-bff can GRANT them. -->
+      <button
+        type="button"
+        data-testid="mc-external-client-disabled"
+        aria-disabled="true"
+        aria-describedby="mc-external-client-help"
+      >Grant an external-client role</button>
+      <span id="mc-external-client-help" class="field-help" data-testid="mc-external-client-help">
+        Granting external-client (Matrix/Mastodon app) access is an administrator action with no moderator endpoint — users manage their own connected apps in their account.
+      </span>
+    </li>
+  </ul>
+
+  <!-- ── Audit trail ───────────────────────────────────────────────── -->
+  <h3 id="mc-audit-heading">Audit trail</h3>
+
+  <!-- "Only my own actions" filter — surfaces the BFF-supported
+       GET /bff/mod/audit?mine option (previously generated but never exposed by
+       any view). Default off = the full domain-scoped trail (every moderator's
+       actions in your domain). -->
+  <form class="mc-filter" (ngSubmit)="applyAuditFilter()" aria-labelledby="mc-audit-heading" novalidate>
+    <label for="mc-audit-mine">
+      <input
+        id="mc-audit-mine"
+        data-testid="mc-audit-mine"
+        type="checkbox"
+        [(ngModel)]="auditMine"
+        name="auditMine"
+        aria-describedby="mc-audit-mine-help"
+        (change)="applyAuditFilter()"
+      />
+      Show only my own actions
+    </label>
+    <span id="mc-audit-mine-help" class="field-help" data-testid="mc-audit-mine-help">
+      Filters the audit trail below to only the actions you performed
+      (GET /bff/mod/audit?mine). Uncheck to show every moderator's actions in your domain.
+    </span>
+  </form>
+
+  <table data-testid="mc-audit" aria-labelledby="mc-audit-heading">
+    <caption class="sr">Local moderator-action audit trail: who did what, on which platform, to whom, with the external result</caption>
+    <thead>
+      <tr>
+        <th scope="col">When</th>
+        <th scope="col">Actor</th>
+        <th scope="col">Action</th>
+        <th scope="col">Platform</th>
+        <th scope="col">Target</th>
+        <th scope="col">Result</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let a of auditRows()" [attr.data-audit-id]="a.id">
+        <td>{{ a.ts }}</td>
+        <td>{{ a.actor }}</td>
+        <td>{{ a.action }}</td>
+        <td>{{ a.platform }}</td>
+        <td>{{ a.target }}</td>
+        <td>{{ a.result }}</td>
+      </tr>
+      <tr *ngIf="auditRows().length === 0">
+        <td colspan="6" data-testid="mc-audit-empty">No moderator actions recorded yet.</td>
+      </tr>
+    </tbody>
+  </table>
+</section>

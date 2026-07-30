@@ -1,0 +1,99 @@
+<section class="hug-findings-panel" data-testid="findings-panel-view" aria-labelledby="fp-heading">
+  <h2 id="fp-heading">System findings</h2>
+  <p class="intro" id="fp-intro">
+    Automated edge-AI avatar/image moderation findings filed before a user's content
+    is published. Each held finding awaits a moderator: <strong>Confirm</strong> it as
+    bad (the automated flag stands and the content is actioned) or <strong>Dismiss</strong>
+    it (a false positive — clear it). The reviewer and the brand are recorded by the
+    server; you only see your own brand's findings.
+  </p>
+
+  <!-- ── Status filter ─────────────────────────────────────────────── -->
+  <h3 id="fp-queue-heading">Finding queue</h3>
+  <form class="fp-filter" (ngSubmit)="applyStatusFilter()" aria-labelledby="fp-queue-heading" novalidate>
+    <label for="fp-status">Filter by status</label>
+    <select
+      id="fp-status"
+      data-testid="fp-status"
+      [(ngModel)]="statusFilter"
+      name="status"
+      aria-describedby="fp-status-help"
+      (change)="applyStatusFilter()"
+    >
+      <option *ngFor="let f of statusFilters" [value]="f.value">{{ f.label }}</option>
+    </select>
+    <button data-testid="fp-status-apply" type="submit" aria-describedby="fp-status-help">Apply</button>
+    <span id="fp-status-help" class="field-help" data-testid="fp-status-help">
+      Narrows the queue below to one disposition; choose "all" to clear it, or
+      "held" to see only the findings still awaiting your review. Changing the
+      selection reloads the queue.
+    </span>
+  </form>
+
+  <table data-testid="fp-queue" aria-labelledby="fp-queue-heading">
+    <caption class="sr">Automated system-finding queue: id, surface, subject, status, created, reviewer, with confirm/dismiss resolve actions</caption>
+    <thead>
+      <tr>
+        <th scope="col">ID</th>
+        <th scope="col">Surface</th>
+        <th scope="col">Subject</th>
+        <th scope="col">Status</th>
+        <th scope="col">Created</th>
+        <th scope="col">Reviewer</th>
+        <th scope="col"><span class="sr">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let f of findings()" [attr.data-finding-id]="f.id">
+        <td>{{ f.id }}</td>
+        <td>{{ f.surface }}</td>
+        <td>{{ f.subject }}</td>
+        <td>{{ f.status }}</td>
+        <td>{{ f.ts }}</td>
+        <td>{{ f.reviewer || '—' }}</td>
+        <td class="fp-row-actions">
+          <!-- WIRED: confirm (actioned=true) — the mod took action. -->
+          <button
+            type="button"
+            [attr.data-confirm]="f.id"
+            [disabled]="!isHeld(f)"
+            [attr.aria-label]="'Confirm finding ' + f.id + ' for ' + subjectName(f) + ' (mark actioned)'"
+            [attr.aria-describedby]="'fp-confirm-help-' + f.id"
+            (click)="confirm(f.id)"
+          >Confirm</button>
+          <span
+            [attr.id]="'fp-confirm-help-' + f.id"
+            class="field-help"
+            [attr.data-confirm-help]="f.id"
+          >Marks this finding ACTIONED — the automated flag stands and you took action on the content. Disabled once the finding is no longer held.</span>
+
+          <!-- WIRED: dismiss (actioned=false) — the mod cleared it. -->
+          <button
+            type="button"
+            [attr.data-dismiss]="f.id"
+            [disabled]="!isHeld(f)"
+            [attr.aria-label]="'Dismiss finding ' + f.id + ' for ' + subjectName(f) + ' (clear as a false positive)'"
+            [attr.aria-describedby]="'fp-dismiss-help-' + f.id"
+            (click)="dismiss(f.id)"
+          >Dismiss</button>
+          <span
+            [attr.id]="'fp-dismiss-help-' + f.id"
+            class="field-help"
+            [attr.data-dismiss-help]="f.id"
+          >Clears this finding as a false positive — no action is taken on the content. Disabled once the finding is no longer held.</span>
+        </td>
+      </tr>
+      <tr *ngIf="findings().length === 0">
+        <td colspan="7" data-testid="fp-queue-empty">The system-finding queue is empty.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <span
+    *ngIf="resolveNote()"
+    class="resolve-note"
+    data-testid="fp-resolve-note"
+    role="status"
+    aria-live="polite"
+  >{{ resolveNote() }}</span>
+</section>

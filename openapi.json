@@ -1,0 +1,562 @@
+{
+  "openapi" : "3.0.1",
+  "info" : {
+    "title" : "hugmesh-mod-bff-api",
+    "description" : "Moderator BFF API (/bff/mod/**) — federation moderation triage + refer-to-admin escalation, server-wide Matrix/Mastodon block (locally audited), and MOD-accessible federation module delivery. ROLE_MOD / ROLE_ADMIN only; no infra/server-admin surface.",
+    "version" : "0.1.0"
+  },
+  "servers" : [ {
+    "url" : ""
+  } ],
+  "tags" : [ {
+    "name" : "Moderator",
+    "description" : "MOD/ADMIN-gated moderation triage, refer-to-admin escalation, server-wide Matrix/Mastodon block (audited), and federation module delivery."
+  }, {
+    "name" : "Moderator status",
+    "description" : "Polling endpoint for the caller's own moderator role status."
+  } ],
+  "paths" : {
+    "/bff/mod/domain-lock/{role}/{user}" : {
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Domain-lock a user (force local-only; writes desired-state → 202 pending-reconcile).",
+        "operationId" : "domainLockUser",
+        "parameters" : [ {
+          "name" : "role",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "ROLE_MATRIX_DOMAINLOCKED|ROLE_MASTODON_DOMAINLOCKED",
+            "type" : "string"
+          }
+        }, {
+          "name" : "user",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 400,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/DomainLockRequest"
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Domain-unlock a user (clears desired-state → 202 pending-reconcile).",
+        "operationId" : "domainUnlockUser",
+        "parameters" : [ {
+          "name" : "role",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "pattern" : "ROLE_MATRIX_DOMAINLOCKED|ROLE_MASTODON_DOMAINLOCKED",
+            "type" : "string"
+          }
+        }, {
+          "name" : "user",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "maxLength" : 400,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        } ],
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/DomainLockRequest"
+              }
+            }
+          }
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/moderation" : {
+      "get" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "List the federation moderation queue (optionally by status).",
+        "operationId" : "listModeration",
+        "parameters" : [ {
+          "name" : "status",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "maxLength" : 32,
+            "minLength" : 0,
+            "pattern" : "[a-z-]*",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Record a moderation recommendation into the federation queue (mod recommends).",
+        "operationId" : "recommendModeration",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/RecommendRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/moderation/{id}/refer" : {
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Refer a moderation request up to an admin (mod escalates — no direct removal).",
+        "operationId" : "referModeration",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/findings/{id}/resolve" : {
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Resolve a held system finding (?actioned=true actions it, false dismisses it).",
+        "operationId" : "resolveFinding",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "required" : true,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int64"
+          }
+        }, {
+          "name" : "actioned",
+          "in" : "query",
+          "required" : true,
+          "schema" : {
+            "type" : "boolean"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/block" : {
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Block a user/instance server-wide on Matrix/Mastodon (external STUBBED → 202 pending, locally audited).",
+        "operationId" : "blockServerWide",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BlockRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/ban" : {
+      "post" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Ban a user from a platform-access role (writes desired-state → 202 pending-reconcile).",
+        "operationId" : "banUser",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BanRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Lift a platform-access ban (clears desired-state → 202 pending-reconcile).",
+        "operationId" : "liftBan",
+        "requestBody" : {
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/BanRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/status" : {
+      "get" : {
+        "tags" : [ "Moderator status" ],
+        "summary" : "Caller's own moderator status — active roles and domain scope.",
+        "operationId" : "getModStatus",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/modules" : {
+      "get" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Deliver the MOD-accessible federation modules manifest.",
+        "operationId" : "listModules",
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/findings" : {
+      "get" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "List the automated edge-AI system-finding queue (optionally by status).",
+        "operationId" : "listFindings",
+        "parameters" : [ {
+          "name" : "status",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "pattern" : "held|dismissed|actioned",
+            "type" : "string"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/bff/mod/audit" : {
+      "get" : {
+        "tags" : [ "Moderator" ],
+        "summary" : "Read the local moderator-action audit trail (domain-scoped; optionally just mine).",
+        "operationId" : "listAuditTrail",
+        "parameters" : [ {
+          "name" : "mine",
+          "in" : "query",
+          "required" : false,
+          "schema" : {
+            "type" : "boolean",
+            "default" : false
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "OK",
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "object",
+                  "additionalProperties" : {
+                    "type" : "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "DomainLockRequest" : {
+        "type" : "object",
+        "properties" : {
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string",
+            "nullable" : true
+          },
+          "idempotencyKey" : {
+            "maxLength" : 200,
+            "minLength" : 0,
+            "type" : "string",
+            "nullable" : true
+          }
+        }
+      },
+      "RecommendRequest" : {
+        "required" : [ "kind", "target" ],
+        "type" : "object",
+        "properties" : {
+          "kind" : {
+            "minLength" : 1,
+            "pattern" : "instance-block|user-removal",
+            "type" : "string"
+          },
+          "target" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "BlockRequest" : {
+        "required" : [ "platform", "scope", "target" ],
+        "type" : "object",
+        "properties" : {
+          "platform" : {
+            "minLength" : 1,
+            "pattern" : "(?i)matrix|mastodon",
+            "type" : "string"
+          },
+          "scope" : {
+            "minLength" : 1,
+            "pattern" : "(?i)user|instance",
+            "type" : "string"
+          },
+          "target" : {
+            "maxLength" : 512,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string"
+          }
+        }
+      },
+      "BanRequest" : {
+        "required" : [ "platform", "target" ],
+        "type" : "object",
+        "properties" : {
+          "platform" : {
+            "minLength" : 1,
+            "pattern" : "(?i)matrix|mastodon|profile",
+            "type" : "string"
+          },
+          "target" : {
+            "maxLength" : 400,
+            "minLength" : 0,
+            "type" : "string"
+          },
+          "ttlSeconds" : {
+            "type" : "integer",
+            "format" : "int64",
+            "nullable" : true
+          },
+          "reason" : {
+            "maxLength" : 2048,
+            "minLength" : 0,
+            "type" : "string",
+            "nullable" : true
+          },
+          "idempotencyKey" : {
+            "maxLength" : 200,
+            "minLength" : 0,
+            "type" : "string",
+            "nullable" : true
+          },
+          "notifyChannels" : {
+            "maxItems" : 8,
+            "minItems" : 0,
+            "type" : "array",
+            "nullable" : true,
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "notifyEmailOnly" : {
+            "type" : "boolean",
+            "nullable" : true
+          }
+        }
+      }
+    }
+  }
+}

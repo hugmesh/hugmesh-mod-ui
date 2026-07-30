@@ -1,0 +1,54 @@
+@use '../styles/tokens' as t;
+
+:host {
+  display: block;
+}
+
+.hug-mod-home {
+  display: block;
+  padding: 1rem;
+
+  .lead {
+    color: var(--hug-text-muted);
+    max-width: 60ch;
+  }
+
+  nav {
+    margin-top: 1rem;
+  }
+
+  .cards {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 1rem;
+    min-width: 16rem;
+    background: var(--hug-bg-1);
+    border: 1px solid var(--hug-border);
+    border-radius: t.$radius-md;
+    text-decoration-line: none;
+
+    &:hover,
+    &:focus-visible {
+      border-color: var(--hug-accent);
+    }
+  }
+
+  .card-title {
+    font-weight: 700;
+    color: var(--hug-text);
+  }
+
+  .card-desc {
+    color: var(--hug-text-muted);
+  }
+}

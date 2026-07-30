@@ -1,0 +1,50 @@
+name: Release
+
+# Manual-only. This workflow is intentionally NOT wired to push/tags — it stays
+# fully inert until a human triggers it from the Actions tab once this repo is
+# ready to publish releases from GitHub instead of (or alongside) the in-cluster
+# GitLab mirror CI (see .gitlab-ci.yml's `build:image` job, which this mirrors).
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (defaults to the short commit SHA)'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: hugmesh-net/hugmesh-mod-ui
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve tag
+        id: vars
+        run: echo "tag=${{ inputs.tag || github.sha }}" | cut -c1-200 >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest

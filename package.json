@@ -1,0 +1,49 @@
+{
+  "name": "@hugmesh/mod",
+  "version": "0.1.0",
+  "description": "Moderator console (moderation queue, refer-to-admin, server-wide block, audit) — Angular micro-frontend (native-federation remote) for the hugmesh.systems host.",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve mod",
+    "build": "ng build mod",
+    "build:mod": "ng build mod",
+    "test": "ng test mod --watch=false --browsers=ChromeHeadlessCI",
+    "test:watch": "ng test mod",
+    "gen": "ng-openapi-gen",
+    "gen:spec": "node -e \"const fs=require('fs');const s=process.env.MOD_BFF_SPEC||'../hugmesh-mod-bff-api/src/main/resources/openapi/openapi.json';if(!fs.existsSync(s)){console.error('spec not found: '+s+'\\nRun `./mvnw -Dtest=OpenApiSpecDumpTest test` in hugmesh-mod-bff-api first, or set MOD_BFF_SPEC to its committed openapi.json.');process.exit(1)}fs.copyFileSync(s,'openapi.json');console.log('copied '+s+' -> openapi.json')\" && npm run gen"
+  },
+  "dependencies": {
+    "@angular-architects/native-federation": "^22.0.0",
+    "@angular/animations": "^22.0.2",
+    "@angular/common": "^22.0.2",
+    "@angular/compiler": "^22.0.2",
+    "@angular/core": "^22.0.2",
+    "@angular/forms": "^22.0.2",
+    "@angular/platform-browser": "^22.0.2",
+    "@angular/platform-browser-dynamic": "^22.0.2",
+    "@angular/router": "^22.0.2",
+    "@softarc/native-federation-node": "^3.5.5",
+    "es-module-shims": "^2.8.1",
+    "rxjs": "^7.8.2",
+    "tslib": "^2.6.0",
+    "zone.js": "^0.16.1"
+  },
+  "devDependencies": {
+    "@angular-devkit/build-angular": "^22.0.4",
+    "@angular/cli": "^22.0.4",
+    "@angular/compiler-cli": "^22.0.2",
+    "@types/jasmine": "^6.0.0",
+    "jasmine-core": "^6.3.0",
+    "karma": "^6.4.4",
+    "karma-chrome-launcher": "^3.2.0",
+    "karma-coverage": "^2.2.1",
+    "karma-jasmine": "^5.1.0",
+    "karma-jasmine-html-reporter": "^2.2.0",
+    "karma-junit-reporter": "^2.0.1",
+    "ng-openapi-gen": "^1.0.5",
+    "ng-packagr": "^22.0.0",
+    "typescript": "~6.0.3"
+  }
+}

@@ -1,0 +1,57 @@
+$black:    #0a0a0a;
+$charcoal: #111111;
+$surface:  #1c1c1c;
+$mid:      #3a3a3a;
+$muted:    #777777;
+$light:    #bbbbbb;
+$offwhite: #e8e8e8;
+
+// HOST-ONLY LEGACY (do NOT use in this remote): the neon-gold + pastel accent
+// palette is the hugmesh.systems HOST SHELL's visual identity. The canonical
+// HugMesh rule is that gold is host chrome only and every REMOTE styles
+// exclusively with the --hug-* purple contract (src/styles.scss). These are kept
+// here only for token-sheet parity with the host; nothing in this remote's
+// components references them (styles/_mixins.scss, which does, is likewise
+// unused host-legacy).
+$neon:        #ffd700;
+$neon-bright: #ffe566;
+$neon-dim:    #cc9900;
+
+$pastel-rose:     #ffc8dd;
+$pastel-lavender: #d0b4f5;
+$pastel-sky:      #bde0fe;
+$pastel-mint:     #caffbf;
+$pastel-lemon:    #fdffb6;
+$pastel-peach:    #ffd6a5;
+
+$font-sans:  Arial, Helvetica, sans-serif;
+// Real monospace stack (was an Arial alias — the fleet $font-mono defect): any
+// <code>/node-id/setup-key content gets genuine monospace from the token layer.
+$font-mono:  ui-monospace, 'Cascadia Mono', 'Courier New', monospace;
+// No display/"fancy" type is used in this chromeless remote (the host owns the
+// wordmark); left aliased to the sans stack deliberately.
+$font-fancy: $font-sans;
+
+$radius-sm:   0.5rem;
+$radius-md:   0.75rem;
+$radius-lg:   1.5rem;
+$radius-card: $radius-md;
+$radius-page: $radius-lg;
+
+$opacity-ghost:  0.05;
+$opacity-border: 0.18;
+$opacity-muted:  0.35;
+
+$z-background:  0;
+$z-content:     1;
+$z-nav:         5;
+$z-overlay:   200;
+$z-top:      9999;
+
+$transition-base: 0.2s ease;
+
+$bp-sm:  576px;
+$bp-md:  768px;
+$bp-lg:  992px;
+$bp-xl:  1200px;
+$bp-xxl: 1400px;

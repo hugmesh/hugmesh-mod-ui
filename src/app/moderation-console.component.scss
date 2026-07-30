@@ -1,0 +1,105 @@
+@use '../styles/tokens' as t;
+
+:host {
+  display: block;
+}
+
+.hug-moderation-console {
+  display: block;
+  padding: 1rem;
+
+  h3 {
+    margin-top: 1.5rem;
+  }
+
+  .intro {
+    flex-basis: 100%;
+    max-width: 44rem;
+    margin: 0;
+    color: var(--hug-text-muted);
+  }
+
+  form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-block: 0.75rem;
+  }
+
+  // The queue status filter sits above the table, not inside a card.
+  .mc-filter {
+    margin-block: 0.5rem;
+  }
+
+  // Per-row actions wrap so the disabled+helptext "decide" control + its sibling
+  // help span lay out cleanly next to the refer button.
+  .mc-row-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+  }
+
+  // Admin-only (no-endpoint) controls: a plain list, each control + helptext.
+  .mc-admin-only {
+    list-style: none;
+    padding: 0;
+
+    li {
+      margin-block: 0.75rem;
+    }
+  }
+
+  label {
+    font-weight: 600;
+    color: var(--hug-text);
+  }
+
+  input,
+  select {
+    background: var(--hug-bg-1);
+    color: var(--hug-text);
+    border: 1px solid var(--hug-border);
+    border-radius: t.$radius-sm;
+    padding: 0.5rem 0.75rem;
+
+    &[aria-invalid='true'] {
+      border-color: var(--hug-error);
+    }
+  }
+
+  button {
+    background: var(--hug-accent);
+    color: var(--hug-text);
+    border: 1px solid var(--hug-accent-soft);
+    border-radius: t.$radius-sm;
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  .block-note {
+    display: block;
+    margin-top: 0.25rem;
+    color: var(--hug-success);
+    font-weight: 600;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+
+    th,
+    td {
+      text-align: left;
+      padding: 0.5rem;
+      border-bottom: 1px solid var(--hug-border);
+    }
+  }
+}

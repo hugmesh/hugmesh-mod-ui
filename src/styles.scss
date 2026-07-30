@@ -1,0 +1,199 @@
+@use 'styles/tokens' as t;
+
+// Moderator micro-frontend (native-federation remote "mod"). Unlike the host
+// shell this remote does NOT pull in Bootstrap — it ships only the shared
+// HugMesh a11y baseline so it is accessible served standalone (`ng serve
+// mod`) AND consistent in look + focus behaviour once federated into the
+// hugmesh.systems host. The a11y rules below are copied verbatim from the
+// host's src/styles.scss (two-layer focus ring, underlined links, coarse-pointer
+// targets, .sr util, --hug-* palette, prefers-reduced-motion + prefers-contrast)
+// so a remote served on its own matches the host's accessibility contract.
+//
+// PALETTE CONTRACT: this remote styles exclusively with the cross-repo --hug-*
+// tokens below (the canonical HugMesh rule — neon gold is HOST-SHELL chrome
+// only). The neon/pastel SCSS tokens + all of styles/_mixins.scss are host-only
+// legacy left in styles/_tokens.scss for parity; this remote consumes only the
+// neutral radii/z-index/breakpoint/font tokens from that sheet.
+
+/* HugMesh WCAG-AA/AAA palette — centralised as runtime :root custom
+ * properties (mirrors hugmesh.games/frontend/src/styles.scss). Each token
+ * carries its contrast ratio against #0a0a12 (the darkest shell background) in
+ * the comment so a future contrast regression is obvious at the source.
+ * Audit: hugmesh.games decisions/024-wcag-palette-audit.md.
+ * The host's neon SCSS tokens (styles/_tokens.scss) drive the visual theme;
+ * these --hug-* vars are the cross-repo HugMesh contract any remote can reach
+ * for instead of pasting hex literals. */
+:root {
+  --hug-bg-0:        #0a0a12; /* shell + login backdrop */
+  --hug-bg-1:        #12121e; /* cards, panels */
+  --hug-bg-2:        #1a1a2e; /* scrollbar trough */
+  --hug-border:      #1e1e32;
+  --hug-text:        #e8e8f0; /* 15.9:1 AAA */
+  --hug-text-muted:  #a8acc4; /*  8.77:1 AAA — replaces #7070a0 (3.88:1) */
+  --hug-accent:      #7c4dff; /* backgrounds/borders only — 3.22:1 as text */
+  --hug-accent-soft: #b388ff; /*  7.38:1 AAA — use this for accent text */
+  --hug-success:     #4caf50;
+  --hug-error:       #ff6b6b;
+}
+
+html,
+body {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+body {
+  background: var(--hug-bg-0);
+  color: var(--hug-text);
+  font-family: t.$font-sans;
+  line-height: 1.5;
+}
+
+h1 {
+  font-size: clamp(1.4rem, 4vw + 0.5rem, 3rem);
+}
+
+h2 {
+  font-size: clamp(1.1rem, 1.5vw + 0.75rem, 1.6rem);
+}
+
+.skip {
+  &:focus,
+  &:focus-visible {
+    position: fixed;
+    top: 0.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: t.$z-top;
+    width: auto;
+    height: auto;
+    padding: 0.6rem 1.2rem;
+    // Skip-link chrome on the --hug-* contract (was gold t.$neon/t.$charcoal —
+    // gold is host-shell-only; a remote must render one accent family per page).
+    background: var(--hug-bg-1);
+    color: var(--hug-text);
+    font-size: 1rem;
+    font-weight: 700;
+    border: 2px solid var(--hug-accent-soft);
+    border-radius: t.$radius-sm;
+    outline: none;
+    clip: auto;
+    overflow: visible;
+    white-space: nowrap;
+  }
+}
+
+// WCAG 2.4.7: visible focus indicator for every keyboard-reachable control.
+// High-contrast two-layer ring (copied from usidiamond.dev) — a solid light
+// outline plus a dark halo so the ring stays visible on ANY background.
+:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(0, 0, 0, 0.75);
+}
+
+// WCAG 1.4.1 — links must be distinguishable beyond colour: underline by
+// default, thicker on hover/focus.
+a {
+  color: var(--hug-accent-soft);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration-thickness: 2px;
+  }
+}
+
+// WCAG 2.5.5 / 2.5.8 — touch targets stay at least 44px tall on coarse
+// pointers (touch screens).
+@media (pointer: coarse) {
+  button,
+  input,
+  select,
+  .nav-link {
+    min-height: 44px;
+  }
+}
+
+// Visually-hidden utility for screen-reader-only text. Visually removes the
+// element while keeping it in the accessibility tree (the standard HugMesh
+// .sr helper, matching the host).
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+// Inline form-error text rendered in a role=alert live region. Uses the AAA
+// --hug-error token so the message is distinguishable from body text by more
+// than colour alone (it is also prefixed with an icon glyph in the template).
+.field-error {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--hug-error);
+  font-weight: 600;
+}
+
+// DISABLED + HELPTEXT convention (cross-cutting, mirrors the API permissions).
+// A control that is [disabled]/aria-disabled because the caller lacks a role or
+// capability gets an aria-describedby pointing at a sibling .field-help / .hint
+// span that STATES the missing role — so the UI explains *why* (defence-in-depth:
+// the API stays the source of truth; the UI mirrors it by disabling + explaining
+// rather than hiding or 403-on-click). Muted but AAA-contrast (--hug-text-muted
+// 8.77:1) and never colour-alone (it sits next to the disabled control + label).
+.field-help,
+.hint {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--hug-text-muted);
+  font-size: 0.9rem;
+}
+
+// A control disabled to mirror an API gate keeps a visible "this is off" cue
+// beyond opacity alone (WCAG 1.4.1): a not-allowed cursor + reduced emphasis.
+// NOTE the admin-only / no-endpoint controls use aria-disabled (NOT native
+// `disabled`) so the control STAYS in the tab order and a screen reader lands on
+// it and announces the aria-describedby helptext explaining WHY it is gated.
+button:disabled,
+[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  section,
+  table,
+  input,
+  select,
+  button {
+    border: 2px solid t.$offwhite !important;
+  }
+
+  h1,
+  h2 {
+    background: t.$black !important;
+    backdrop-filter: none !important;
+    border-color: t.$offwhite !important;
+    color: t.$offwhite !important;
+  }
+}

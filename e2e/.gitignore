@@ -1,0 +1,6 @@
+node_modules/
+.features-gen/
+results/
+test-results/
+playwright-report/
+pw-validate.config.ts

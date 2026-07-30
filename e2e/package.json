@@ -1,0 +1,15 @@
+{
+  "name": "hugmesh-mod-ui-e2e",
+  "private": true,
+  "description": "Playwright + playwright-bdd e2e harness for the hugmesh-mod-ui federated remote. Copied from the proven hugmesh.games/e2e pattern (mirrors admin-ui#39, superadmin-appstore-ui#2, login-ui#19). Ships dark (wave 2b) — all cluster-dependent scenarios are @cluster-tagged so the suite compiles and discovers offline without a live stack.",
+  "scripts": {
+    "test": "playwright test",
+    "bdd:gen": "bddgen",
+    "bdd": "bddgen && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.1",
+    "@types/node": "^24.0.0",
+    "playwright-bdd": "^9.2.0"
+  }
+}

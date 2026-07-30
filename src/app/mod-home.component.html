@@ -1,0 +1,27 @@
+<section class="hug-mod-home" data-testid="mod-home-view" aria-labelledby="mod-home-heading">
+  <h2 id="mod-home-heading">Moderator</h2>
+  <p class="lead">
+    Triage the federation moderation queue (including user self-silence appeals),
+    recommend or escalate to an admin, ban or lift access, force a user local-only
+    (domain-lock), block a user or instance server-wide, and review the audit trail.
+    A moderator never removes a user directly and never decides an appeal — escalation
+    (refer / recommend) is the path; deciding is an administrator action.
+  </p>
+
+  <nav aria-label="Moderator sections">
+    <ul class="cards">
+      <li>
+        <a routerLink="console" data-testid="mod-home-console" class="card" aria-describedby="mod-home-console-desc">
+          <span class="card-title">Moderation console</span>
+          <span class="card-desc" id="mod-home-console-desc">Queue + status filter, recommend, ban/lift, domain-lock, server-wide block, audit.</span>
+        </a>
+      </li>
+      <li>
+        <a routerLink="findings" data-testid="mod-home-findings" class="card" aria-describedby="mod-home-findings-desc">
+          <span class="card-title">System findings</span>
+          <span class="card-desc" id="mod-home-findings-desc">Automated edge-AI avatar/image findings: status filter, confirm (actioned) or dismiss (cleared).</span>
+        </a>
+      </li>
+    </ul>
+  </nav>
+</section>
