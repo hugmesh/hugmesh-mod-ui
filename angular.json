@@ -52,12 +52,24 @@
 							"es-module-shims"
 						],
 						"tsConfig": "tsconfig.app.json",
-						"assets": ["src/favicon.ico"],
-						"styles": ["src/styles.scss"]
+						"assets": [
+							"src/favicon.ico"
+						],
+						"styles": [
+							"src/styles.scss"
+						]
 					},
 					"configurations": {
 						"production": {
-							"outputHashing": "all"
+							"outputHashing": "all",
+							"optimization": {
+								"scripts": true,
+								"styles": {
+									"minify": true,
+									"inlineCritical": false
+								},
+								"fonts": true
+							}
 						},
 						"development": {
 							"optimization": false,
@@ -78,11 +90,16 @@
 					"builder": "@angular-devkit/build-angular:karma",
 					"options": {
 						"main": "src/test.ts",
-						"polyfills": ["zone.js", "zone.js/testing"],
+						"polyfills": [
+							"zone.js",
+							"zone.js/testing"
+						],
 						"tsConfig": "tsconfig.spec.json",
 						"karmaConfig": "karma.conf.js",
 						"assets": [],
-						"styles": ["src/styles.scss"],
+						"styles": [
+							"src/styles.scss"
+						],
 						"scripts": []
 					}
 				}
