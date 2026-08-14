@@ -1,6 +1,6 @@
 # hugmesh-mod-ui — builds the Moderator native-federation REMOTE
 # (src → dist/mod) and serves it via nginx with CORS so the
-# hugmesh.systems host can fetch its remoteEntry.json cross-origin.
+# hugmesh.net host can fetch its remoteEntry.json cross-origin.
 # Deployed to the hugmesh-frontend namespace, fronted by the fe-gateway at
 # /mod. Casdoor MOD/ADMIN-role guarded by the host.
 # Angular CLI 22 requires Node >= 24.15.

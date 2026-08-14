@@ -4,7 +4,7 @@
 // shell this remote does NOT pull in Bootstrap — it ships only the shared
 // HugMesh a11y baseline so it is accessible served standalone (`ng serve
 // mod`) AND consistent in look + focus behaviour once federated into the
-// hugmesh.systems host. The a11y rules below are copied verbatim from the
+// hugmesh.net host. The a11y rules below are copied verbatim from the
 // host's src/styles.scss (two-layer focus ring, underlined links, coarse-pointer
 // targets, .sr util, --hug-* palette, prefers-reduced-motion + prefers-contrast)
 // so a remote served on its own matches the host's accessibility contract.

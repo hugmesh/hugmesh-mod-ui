@@ -1,5 +1,5 @@
 // REMOTE bundle config for the Moderator micro-frontend (native-federation remote
-// name "mod"). The hugmesh.systems host consumes the single exposed
+// name "mod"). The hugmesh.net host consumes the single exposed
 // `./routes` module via loadRemoteModule({ remoteName: 'mod', exposedModule:
 // './routes' }) and mounts MOD_ROUTES at /mod — so the remote name and the
 // exposed module key MUST stay unchanged or the host's moderator console breaks.

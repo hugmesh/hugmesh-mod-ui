@@ -6,7 +6,7 @@ import { modGuard } from './mod.guard';
 
 /**
  * Routes exposed by the Moderator native-federation remote (`./routes`). The
- * hugmesh.systems host mounts these at `/mod`, giving:
+ * hugmesh.net host mounts these at `/mod`, giving:
  *
  * - `/mod`          → {@link ModHomeComponent}          — moderator role-home / landing.
  * - `/mod/console`  → {@link ModerationConsoleComponent} — moderation console (queue +

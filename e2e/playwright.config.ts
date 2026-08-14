@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 import { defineBddConfig } from 'playwright-bdd';
 
 // Copied from the proven hugmesh.games/e2e pattern. The mod-ui is a
-// native-federation REMOTE mounted by the hugmesh.systems host at /mod, so
+// native-federation REMOTE mounted by the hugmesh.net host at /mod, so
 // the e2e baseURL points at the host front door (the federated remote is not
 // browsable in isolation in a real stack). Override with E2E_BASE_URL.
 const baseURL = process.env.E2E_BASE_URL ?? 'https://host.docker.internal:8443';

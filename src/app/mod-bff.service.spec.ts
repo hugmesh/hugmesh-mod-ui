@@ -54,7 +54,7 @@ const sampleFinding: SystemFinding = {
   status: 'held',
   reviewer: null,
   ts: '2026-06-06T00:00:00Z',
-  domain: 'hugmesh.systems',
+  domain: 'hugmesh.net',
 };
 
 /**

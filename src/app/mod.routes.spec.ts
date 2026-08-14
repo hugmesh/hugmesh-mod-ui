@@ -5,7 +5,7 @@ import { FindingsPanelComponent } from './findings-panel.component';
 
 /**
  * These specs lock down the federation contract: `./routes` (exposed under the
- * remote name "mod") is the single module the hugmesh.systems host mounts at
+ * remote name "mod") is the single module the hugmesh.net host mounts at
  * /mod. The host depends on these exact paths and components, so a regression
  * here would silently break the host's moderator console.
  */
