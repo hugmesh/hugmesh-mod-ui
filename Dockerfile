@@ -9,7 +9,14 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-RUN npm run build:mod
+# --base-href is REQUIRED: this UI is served under /mod/ behind the fe-gateway.
+# Without it Angular emits ROOT-relative asset URLs, so loading /mod/ fetches
+# /styles-*.css from the gateway root, gets the shell's HTML back, and the
+# remote renders BLANK — it only works when opened at the container's own
+# address (operator report, 2026-08-14). The generator's .stack-src tree
+# carried this as an UNCOMMITTED local edit; committed here so a clean clone
+# builds a working image.
+RUN npm run build:mod -- --base-href=/mod/
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
