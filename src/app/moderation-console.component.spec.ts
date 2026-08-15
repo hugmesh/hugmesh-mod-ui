@@ -2,7 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { ModerationConsoleComponent } from './moderation-console.component';
-import { BlockResult, ModAction, ModBffService, ModerationRequest } from './mod-bff.service';
+import { BlockResult, ModAction, ModBffService, ModerationRequest, SystemFinding } from './mod-bff.service';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
 
@@ -36,6 +36,10 @@ describe('ModerationConsoleComponent', () => {
   let admin: jasmine.SpyObj<AdminBffService>;
   let moderation$: BehaviorSubject<ModerationRequest[]>;
   let audit$: BehaviorSubject<ModAction[]>;
+  // The target pickers pull their suggestions from ModDirectoryService, which subscribes
+  // all THREE caches — so the mock must expose findings too, not just the two this suite
+  // originally asserted on.
+  let findings$: BehaviorSubject<SystemFinding[]>;
   const isAdmin = signal(false);
 
   async function setup(asAdmin = false): Promise<void> {
@@ -45,10 +49,15 @@ describe('ModerationConsoleComponent', () => {
     isAdmin.set(asAdmin);
     moderation$ = new BehaviorSubject<ModerationRequest[]>([request]);
     audit$ = new BehaviorSubject<ModAction[]>([action]);
+    findings$ = new BehaviorSubject<SystemFinding[]>([]);
     bff = jasmine.createSpyObj<ModBffService>(
       'ModBffService',
       ['loadModeration', 'refer', 'recommend', 'block', 'ban', 'lift', 'domainLock', 'domainUnlock', 'loadAudit'],
-      { moderation: moderation$.asObservable(), audit: audit$.asObservable() },
+      {
+        moderation: moderation$.asObservable(),
+        audit: audit$.asObservable(),
+        findings: findings$.asObservable(),
+      },
     );
     bff.loadModeration.and.resolveTo([request]);
     bff.loadAudit.and.resolveTo([action]);
@@ -220,6 +229,33 @@ describe('ModerationConsoleComponent', () => {
       const note = el.querySelector('[data-testid="mc-block-note"]')!;
       expect(note.getAttribute('role')).toBe('status');
       expect(note.getAttribute('aria-live')).toBe('polite');
+    });
+  });
+
+  describe('target pickers (typeahead, sourced from the mod\'s own scoped queues)', () => {
+    it('renders every target field as a combobox, not a bare text input', () => {
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      for (const id of ['mc-rec-target', 'mc-ban-target', 'mc-dl-user', 'mc-target']) {
+        const field = el.querySelector<HTMLInputElement>(`#${id}`)!;
+        expect(field).withContext(id).not.toBeNull();
+        expect(field.getAttribute('role')).withContext(id).toBe('combobox');
+        expect(field.getAttribute('aria-controls')).withContext(id).toBe(`${id}-listbox`);
+        // The label association the previous plain input had must survive the swap.
+        expect(el.querySelector(`label[for="${id}"]`)).withContext(`label for ${id}`).not.toBeNull();
+      }
+    });
+
+    it('keeps free text: typing an unsuggested remote target still binds to the model', () => {
+      fixture.detectChanges();
+      const el: HTMLElement = fixture.nativeElement;
+      const field = el.querySelector<HTMLInputElement>('#mc-ban-target')!;
+      field.value = '@stranger:elsewhere.example';
+      field.dispatchEvent(new Event('input'));
+      fixture.detectChanges();
+      // A moderator must be able to act on an account that has never appeared in their
+      // queues — the picker suggests, it never constrains.
+      expect(component.banTarget).toBe('@stranger:elsewhere.example');
     });
   });
 

@@ -15,6 +15,7 @@ import {
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
 import { accessibleName } from './accessible-name';
+import { TargetTypeaheadComponent } from './target-typeahead.component';
 
 /**
  * Moderation console (ROLE_MOD / ROLE_ADMIN only, route-guarded). The single
@@ -60,11 +61,20 @@ import { accessibleName } from './accessible-name';
  * NO mod-facing SSE (mod-bff-api exposes no SSE endpoint of its own), so write
  * results are surfaced as honest async "pending reconcile" notes and the queue
  * is refreshed on demand (poll-on-action), never via an invented stream.
+ *
+ * <h3>Target pickers</h3>
+ * Every field naming a user or instance is a {@link TargetTypeaheadComponent} — a
+ * type-to-filter combobox suggesting accounts already visible in THIS moderator's
+ * own domain-scoped queues (findings / moderation queue / audit trail; see
+ * {@link ModDirectoryService} for why a directory search is not available to a MOD
+ * and why filtering those already-scoped lists is not an enumeration hole). Free
+ * text is always still accepted, because a moderator must be able to act on a
+ * remote account that has never appeared in their queues.
  */
 @Component({
   selector: 'hug-moderation-console',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TargetTypeaheadComponent],
   templateUrl: './moderation-console.component.html',
   styleUrl: './moderation-console.component.scss',
 })

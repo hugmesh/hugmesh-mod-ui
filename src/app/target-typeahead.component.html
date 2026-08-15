@@ -1,0 +1,63 @@
+<!--
+  APG "combobox with listbox popup". DOM focus stays on the input at all times; the
+  highlighted option is communicated by aria-activedescendant, never by moving focus.
+-->
+<div class="hug-typeahead">
+  <input
+    #input
+    class="ta-input"
+    type="text"
+    role="combobox"
+    autocomplete="off"
+    autocapitalize="off"
+    spellcheck="false"
+    [id]="inputId"
+    [attr.name]="name"
+    [attr.data-testid]="testId || null"
+    [attr.placeholder]="placeholder || null"
+    [value]="value"
+    [attr.aria-expanded]="open()"
+    [attr.aria-controls]="listboxId"
+    aria-autocomplete="list"
+    [attr.aria-activedescendant]="activeDescendant"
+    [attr.aria-invalid]="invalid ? 'true' : null"
+    [attr.aria-describedby]="describedByChain"
+    (input)="onInput($any($event.target).value)"
+    (keydown)="onKeydown($event)"
+    (focus)="onFocus()"
+    (blur)="onBlur()"
+  />
+
+  <ul
+    class="ta-list"
+    role="listbox"
+    [id]="listboxId"
+    [attr.data-testid]="testId ? testId + '-listbox' : null"
+    [hidden]="!open()"
+    [attr.aria-label]="'Target suggestions for ' + (value || 'your search')"
+  >
+    <li
+      *ngFor="let s of options(); let i = index"
+      class="ta-option"
+      role="option"
+      [id]="optionId(i)"
+      [class.is-active]="i === activeIndex()"
+      [attr.aria-selected]="i === activeIndex()"
+      [attr.data-option]="s.target"
+      (mousedown)="choose(s)"
+    >
+      <span class="ta-target">{{ s.target }}</span>
+      <!-- Naming the source is what makes a suggestion trustworthy: a moderator can see
+           this is someone from a held finding, not an arbitrary name the UI invented. -->
+      <span class="ta-sub">seen in: {{ s.source }}</span>
+    </li>
+  </ul>
+
+  <span
+    class="ta-status"
+    [id]="statusId"
+    [attr.data-testid]="testId ? testId + '-status' : null"
+    role="status"
+    aria-live="polite"
+  >{{ statusText }}</span>
+</div>

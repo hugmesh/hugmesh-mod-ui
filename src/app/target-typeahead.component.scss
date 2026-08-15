@@ -1,0 +1,68 @@
+@use '../styles/tokens' as t;
+
+:host {
+  display: block;
+}
+
+.hug-typeahead {
+  // The listbox is absolutely positioned against this, so it overlays the following form
+  // rows instead of pushing them down as the moderator types.
+  position: relative;
+  display: block;
+}
+
+.ta-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.ta-list {
+  position: absolute;
+  z-index: t.$z-overlay;
+  inset-inline: 0;
+  top: 100%;
+  margin: 0.15rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--hug-bg-1, #{t.$surface});
+  border: 1px solid var(--hug-border, #{t.$mid});
+  border-radius: t.$radius-sm;
+
+  &[hidden] { display: none; }
+}
+
+.ta-option {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+  color: var(--hug-text, #{t.$offwhite});
+
+  // Highlight, not focus: DOM focus never leaves the input (aria-activedescendant), so the
+  // active row needs a visible treatment of its own.
+  &.is-active,
+  &:hover {
+    background: var(--hug-bg-2, #{t.$charcoal});
+    outline: 2px solid var(--hug-accent-soft, #{t.$light});
+    outline-offset: -2px;
+  }
+}
+
+.ta-target {
+  font-weight: 700;
+  word-break: break-all;   // full @user:instance.example ids are long
+}
+
+.ta-sub {
+  font-size: 0.85rem;
+  color: var(--hug-text-muted, #{t.$muted});
+}
+
+.ta-status {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--hug-text-muted, #{t.$muted});
+  min-height: 1.1em;   // reserve the line so the form does not jump between states
+}

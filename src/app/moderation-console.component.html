@@ -148,15 +148,15 @@
     </span>
 
     <label for="mc-rec-target">Target</label>
-    <input
-      id="mc-rec-target"
-      data-testid="mc-rec-target"
-      [(ngModel)]="recommendTarget"
+    <hug-target-typeahead
+      inputId="mc-rec-target"
+      testId="mc-rec-target"
       name="recTarget"
       placeholder="evil.example or @user:instance.example"
-      [attr.aria-invalid]="recommendError() ? 'true' : null"
-      [attr.aria-describedby]="recommendError() ? 'mc-rec-error' : 'mc-rec-target-help'"
-    />
+      [(value)]="recommendTarget"
+      [invalid]="!!recommendError()"
+      [describedBy]="recommendError() ? 'mc-rec-error' : 'mc-rec-target-help'"
+    ></hug-target-typeahead>
     <span id="mc-rec-target-help" class="field-help" data-testid="mc-rec-target-help">
       For an instance-block enter the server domain (e.g. evil.example); for a
       user-removal enter the full account (e.g. &#64;user:instance.example). Required.
@@ -206,15 +206,15 @@
     </span>
 
     <label for="mc-ban-target">Target user</label>
-    <input
-      id="mc-ban-target"
-      data-testid="mc-ban-target"
-      [(ngModel)]="banTarget"
+    <hug-target-typeahead
+      inputId="mc-ban-target"
+      testId="mc-ban-target"
       name="banTarget"
       placeholder="username / @user:instance.example"
-      [attr.aria-invalid]="banError() ? 'true' : null"
-      [attr.aria-describedby]="banError() ? 'mc-ban-error' : 'mc-ban-target-help'"
-    />
+      [(value)]="banTarget"
+      [invalid]="!!banError()"
+      [describedBy]="banError() ? 'mc-ban-error' : 'mc-ban-target-help'"
+    ></hug-target-typeahead>
     <span id="mc-ban-target-help" class="field-help" data-testid="mc-ban-target-help">
       The user to ban or lift — a local username or a full &#64;user:instance.example
       address. The same target is used by both Ban and Lift ban. Required.
@@ -285,15 +285,15 @@
     </span>
 
     <label for="mc-dl-user">Target user</label>
-    <input
-      id="mc-dl-user"
-      data-testid="mc-dl-user"
-      [(ngModel)]="domainLockUser"
+    <hug-target-typeahead
+      inputId="mc-dl-user"
+      testId="mc-dl-user"
       name="dlUser"
       placeholder="username / @user:instance.example"
-      [attr.aria-invalid]="domainLockError() ? 'true' : null"
-      [attr.aria-describedby]="domainLockError() ? 'mc-dl-error' : 'mc-dl-user-help'"
-    />
+      [(value)]="domainLockUser"
+      [invalid]="!!domainLockError()"
+      [describedBy]="domainLockError() ? 'mc-dl-error' : 'mc-dl-user-help'"
+    ></hug-target-typeahead>
     <span id="mc-dl-user-help" class="field-help" data-testid="mc-dl-user-help">
       The user to lock or unlock — a local username or full &#64;user:instance.example
       address. The same target is used by both Domain-lock and Remove lock. Required.
@@ -355,15 +355,15 @@
     </span>
 
     <label for="mc-target">Target</label>
-    <input
-      id="mc-target"
-      data-testid="mc-target"
-      [(ngModel)]="target"
+    <hug-target-typeahead
+      inputId="mc-target"
+      testId="mc-target"
       name="target"
       placeholder="@user:instance.example or instance.example"
-      [attr.aria-invalid]="blockError() ? 'true' : null"
-      [attr.aria-describedby]="blockError() ? 'mc-block-error' : 'mc-target-help'"
-    />
+      [(value)]="target"
+      [invalid]="!!blockError()"
+      [describedBy]="blockError() ? 'mc-block-error' : 'mc-target-help'"
+    ></hug-target-typeahead>
     <span id="mc-target-help" class="field-help" data-testid="mc-target-help">
       For a user scope enter the full account (e.g. &#64;user:instance.example); for an
       instance scope enter the server domain (e.g. instance.example). Required.
@@ -425,7 +425,7 @@
         aria-describedby="mc-external-client-help"
       >Grant an external-client role</button>
       <span id="mc-external-client-help" class="field-help" data-testid="mc-external-client-help">
-        Granting external-client (Matrix/Mastodon app) access is an administrator action with no moderator endpoint — users manage their own connected apps in their account.
+        Granting external-client (Matrix/Mastodon app) access is an administrator action with no moderator endpoint. It lives in the admin console under Delegation → External clients, and is itself gated on the domain's external-client-grant capability.
       </span>
     </li>
   </ul>
