@@ -2,12 +2,12 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-The moderator console for the [HugMesh](https://github.com/hugmesh-net) platform — an Angular 22
+The moderator console for the [HugMesh](https://github.com/hugmesh) platform — an Angular 22
 **native-federation remote** that ships the moderation queue, findings triage, ban / domain-lock /
 server-wide-block controls, and audit trail used by platform moderators. It's the moderator-role
-counterpart to [`hugmesh-admin-ui`](https://github.com/hugmesh-net/hugmesh-admin-ui).
+counterpart to [`hugmesh-admin-ui`](https://github.com/hugmesh/hugmesh-admin-ui).
 
-At runtime, [`hugmesh-host-shell`](https://github.com/hugmesh-net/hugmesh-host-shell) federates
+At runtime, [`hugmesh-host-shell`](https://github.com/hugmesh/hugmesh-host-shell) federates
 this remote's exposed `MOD_ROUTES` and mounts them at **`/mod`**:
 
 | Host path        | View                   | Component                    |
@@ -22,7 +22,7 @@ three `MOD_ROUTES` entries, so a standalone dev shell gets the same client-side 
 host-federated build), gating on `SessionService.isMod()` — true for either `mod` or `admin`,
 mirroring the backend's `hasAnyRole('MOD','ADMIN')`.
 
-The backend is [`hugmesh-mod-bff-api`](https://github.com/hugmesh-net/hugmesh-mod-bff-api),
+The backend is [`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api),
 reached same-origin at `/bff/mod/**` through the platform's front-end gateway. Every request
 carries the HttpOnly `bff_` session cookie (`withCredentials`, attached by `authInterceptor`) —
 the browser never holds a bearer token in JS-reachable storage (see
@@ -76,7 +76,7 @@ flowchart TB
     BFF -- "validates Bearer issuer" --> CASDOOR
 ```
 
-- **Host shell ([`hugmesh-host-shell`](https://github.com/hugmesh-net/hugmesh-host-shell))** —
+- **Host shell ([`hugmesh-host-shell`](https://github.com/hugmesh/hugmesh-host-shell))** —
   route-guards `/mod` on the MOD/ADMIN role and calls
   `loadRemoteModule({ remoteName: 'mod', exposedModule: './routes' })` to lazy-mount `MOD_ROUTES`.
   Host and remote each hold their **own** `SessionService` over the same `hug.session`
@@ -86,7 +86,7 @@ flowchart TB
   same-origin-proxies `/bff/mod/**` to the mod backend. Every request carries the HttpOnly `bff_`
   session cookie (`withCredentials`); the gateway's `BffCookieToBearerWebFilter` swaps it for an
   internal Bearer token server-side.
-- **Backend ([`hugmesh-mod-bff-api`](https://github.com/hugmesh-net/hugmesh-mod-bff-api))** —
+- **Backend ([`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api))** —
   the source of truth: it re-checks the MOD/ADMIN role and gates every endpoint server-side (the
   UI mirrors those gates rather than trusting itself).
 - **Multi-tenancy** — this remote is **tenant-agnostic**: it holds no domain/issuer/brand code.
@@ -152,7 +152,7 @@ and the platform resolves identity and role upstream.
   finding. Surfaced at `/mod/findings` via `FindingsPanelComponent`.
 
 **Admin-only**, wired via `AdminBffService`
-([`hugmesh-admin-bff-api`](https://github.com/hugmesh-net/hugmesh-admin-bff-api), a different
+([`hugmesh-admin-bff-api`](https://github.com/hugmesh/hugmesh-admin-bff-api), a different
 service than the mod backend):
 
 - **Appeals decide (approve/deny)** — `POST /bff/admin/moderation/{id}/decide`. Shown only when
@@ -286,7 +286,7 @@ The dev server expects the mod backend to be reachable. `ModBffService` delegate
 only works behind the fe-gateway. For standalone dev without the gateway, override `rootUrl` (e.g.
 via a DI provider or the browser console) before the app bootstraps, or run the full stack via the
 kind dev-overlay recipe documented in
-[`hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator).
+[`hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator).
 
 | Dev URL                          | View                   |
 | --------------------------------- | ---------------------- |
@@ -342,13 +342,13 @@ The primary pipeline is GitLab CI (`.gitlab-ci.yml`), with four stages:
 - **build** — builds and pushes the container image to the project's container registry, tagged
   with the release tag or git SHA plus a moving branch tag.
 - **pentest** — a non-blocking OWASP pen-test stage, included from the centralized
-  `pentest-stage.gitlab-ci.yml` in [`hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator),
+  `pentest-stage.gitlab-ci.yml` in [`hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator),
   running `pentest:sca` (Dependency-Check SCA) and `pentest:dast` (an authenticated ZAP baseline
   scan plus nuclei). Both are `allow_failure: true` and run on the default branch and merge
   requests, so a finding surfaces in the MR widget without breaking the pipeline.
 
 A manual-dispatch GitHub Actions workflow (`.github/workflows/release.yml`) is also available to
-build and publish the image to GHCR (`ghcr.io/hugmesh-net/hugmesh-mod-ui`) directly from GitHub —
+build and publish the image to GHCR (`ghcr.io/hugmesh/hugmesh-mod-ui`) directly from GitHub —
 useful if you're building from a fork or don't have access to the project's primary CI. It's
 inert until triggered from the Actions tab; it doesn't run on every push.
 
@@ -365,7 +365,7 @@ make pentest-dast     # DAST against $DAST_TARGET_URL, delegating to the hugmesh
 Tunables: `NPM_AUDIT_LEVEL` (default `high`), `DAST_TARGET_URL` (unset ⇒ DAST is skipped),
 `PENTEST_HARNESS_DIR` (default `../hugmesh-generator/tests/pentest`), `PENTEST_SCAN`
 (`baseline` or `full`, default `baseline`). The DAST target delegates to the shared harness in
-[`hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator) — clone it as a sibling
+[`hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator) — clone it as a sibling
 checkout to use `make pentest-dast` locally.
 
 ## Project status
@@ -428,19 +428,19 @@ Issues and pull requests are welcome. A few pointers specific to this repo:
 
 For platform-level changes (new backend endpoints, shared federation config, CI templates), see
 the related repositories below — most cross-cutting conventions live in
-[`hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator).
+[`hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator).
 
 ## Related HugMesh repositories
 
 | Repository | Role |
 | --- | --- |
-| [`hugmesh-host-shell`](https://github.com/hugmesh-net/hugmesh-host-shell) | Host application that federates every per-role/per-service remote, including this one |
-| [`hugmesh-admin-ui`](https://github.com/hugmesh-net/hugmesh-admin-ui) | Admin-role counterpart remote (decide, infra/server administration) |
-| [`hugmesh-mod-bff-api`](https://github.com/hugmesh-net/hugmesh-mod-bff-api) | Backend-for-frontend this console talks to at `/bff/mod/**` |
-| [`hugmesh-admin-bff-api`](https://github.com/hugmesh-net/hugmesh-admin-bff-api) | Backend-for-frontend behind the admin-only decide control |
-| [`hugmesh-generator`](https://github.com/hugmesh-net/hugmesh-generator) | Shared CI templates, pen-test harness, and platform dev-cluster tooling |
+| [`hugmesh-host-shell`](https://github.com/hugmesh/hugmesh-host-shell) | Host application that federates every per-role/per-service remote, including this one |
+| [`hugmesh-admin-ui`](https://github.com/hugmesh/hugmesh-admin-ui) | Admin-role counterpart remote (decide, infra/server administration) |
+| [`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api) | Backend-for-frontend this console talks to at `/bff/mod/**` |
+| [`hugmesh-admin-bff-api`](https://github.com/hugmesh/hugmesh-admin-bff-api) | Backend-for-frontend behind the admin-only decide control |
+| [`hugmesh-generator`](https://github.com/hugmesh/hugmesh-generator) | Shared CI templates, pen-test harness, and platform dev-cluster tooling |
 
-See the [hugmesh-net](https://github.com/hugmesh-net) organization for the rest of the platform.
+See the [hugmesh](https://github.com/hugmesh) organization for the rest of the platform.
 
 ## License
 
