@@ -39,7 +39,7 @@ pentest-dast: ## DAST harness against $$DAST_TARGET_URL (delegates to the genera
 		echo "==> [pentest] DAST skipped: DAST_TARGET_URL not set."; \
 		echo "    To run the full authenticated ZAP harness (baseline + probes + nuclei),"; \
 		echo "    set DAST_TARGET_URL and ensure the generator harness is available, e.g.:"; \
-		echo "    git clone https://github.com/hugmesh-net/hugmesh-generator.git"; \
+		echo "    git clone https://github.com/hugmesh/hugmesh-generator.git"; \
 		echo "    DAST_TARGET_URL=http://localhost:4200 \\"; \
 		echo "      bash $(PENTEST_HARNESS_DIR)/run-pentest.sh --env compose --scan $(PENTEST_SCAN) --pipeline main"; \
 	elif [ -x "$(PENTEST_HARNESS_DIR)/run-pentest.sh" ]; then \
@@ -48,6 +48,6 @@ pentest-dast: ## DAST harness against $$DAST_TARGET_URL (delegates to the genera
 			echo "==> [pentest] DAST harness reported findings/errors (non-blocking locally)"; \
 	else \
 		echo "==> [pentest] DAST_TARGET_URL=$(DAST_TARGET_URL) but harness not found at $(PENTEST_HARNESS_DIR)/run-pentest.sh"; \
-		echo "    Clone it: git clone https://github.com/hugmesh-net/hugmesh-generator.git"; \
+		echo "    Clone it: git clone https://github.com/hugmesh/hugmesh-generator.git"; \
 		echo "    then re-run, or set PENTEST_HARNESS_DIR to the harness path."; \
 	fi
