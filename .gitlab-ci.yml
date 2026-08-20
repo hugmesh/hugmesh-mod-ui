@@ -9,7 +9,7 @@
 # ONE source of truth shared by every onboarded repo. Additive: the jobs below
 # `extends:` these and are allow_failure, so they never block test/build.
 include:
-  - project: 'HugMesh/hugmesh-generator'
+  - project: 'hugmesh/hugmesh-generator'
     ref: main
     file: '/tests/pentest/ci/pentest-stage.gitlab-ci.yml'
 
