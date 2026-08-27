@@ -1,3 +1,5 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { Browser, BrowserContext, Page } from '@playwright/test';
 
 /**
@@ -22,9 +24,10 @@ import { Browser, BrowserContext, Page } from '@playwright/test';
  *                         plain user bounced off the console entirely.
  *
  * The `kind` tag selects which role-specific assertions a feature drives. The
- * `domain` tag drives the cross-tenant isolation scenarios. Passwords default to
- * `process.env.E2E_PASSWORD` (or `e2e-pass`) unless a per-user override env var
- * is exported.
+ * `domain` tag drives the cross-tenant isolation scenarios. Passwords resolve
+ * via {@link passwordFor}: a per-user override env var, then the shared
+ * `process.env.E2E_PASSWORD`, then the run-state credentials file written by
+ * hugmesh-generator's `make stack-seed` — there is no literal fallback.
  */
 export type RoleKind = 'superadmin' | 'admin' | 'mod' | 'user';
 
@@ -83,12 +86,77 @@ export const SEED_USERS: SeedUser[] = [
   { username: 'superadmin', passwordEnv: 'E2E_SUPERADMIN_PASSWORD', provider: 'google', roles: ['superadmin', 'admin'], kind: 'superadmin', domain: 'domain-a' },
 ];
 
-/** Resolve a seed user's password — env override or `E2E_PASSWORD` fallback —
- *  without throwing on a missing env. */
+/**
+ * Locate the run-state credentials file written by hugmesh-generator's
+ * `tests/stack/e2e-password.sh` (`e2e_password_ensure()`): `$E2E_CREDENTIALS_FILE`
+ * if set, else a `.e2e-credentials` found by walking up from `process.cwd()`.
+ * This repo is a CONSUMER — it never generates the file, only reads it — so an
+ * explicit override plus an upward search covers both "run from the repo root"
+ * and "run from e2e/" without hardcoding a single relative path.
+ */
+function findCredentialsFile(): string | undefined {
+  const override = process.env['E2E_CREDENTIALS_FILE'];
+  if (override) return override;
+  let dir = process.cwd();
+  for (;;) {
+    const candidate = path.join(dir, '.e2e-credentials');
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Parse the plain `KEY=value` run-state credentials file (no quotes, no
+ * `export` keyword — see CONTRACT rule 3). A missing/unreadable file is NOT an
+ * error here: it yields an empty map so {@link passwordFor} falls through to
+ * its own explicit error instead of an ENOENT stack trace.
+ */
+function readCredentialsFile(): Record<string, string> {
+  const file = findCredentialsFile();
+  if (!file) return {};
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, 'utf8');
+  } catch {
+    return {};
+  }
+  const values: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq === -1) continue;
+    values[trimmed.slice(0, eq)] = trimmed.slice(eq + 1);
+  }
+  return values;
+}
+
+/**
+ * Resolve a seed user's password. Precedence:
+ *   1. the per-user override, `process.env[user.passwordEnv]`
+ *   2. the shared `process.env.E2E_PASSWORD` (same-run propagation)
+ *   3. the run-state credentials file (role-specific key, then `E2E_PASSWORD`)
+ * There is no literal fallback (CONTRACT rule 4) — a run with nothing seeded
+ * throws, naming `make stack-seed`, rather than silently authenticating with a
+ * guessable default.
+ */
 export function passwordFor(user: SeedUser): string {
-  return process.env[user.passwordEnv]
-    ?? process.env['E2E_PASSWORD']
-    ?? 'e2e-pass';
+  const fromEnv = process.env[user.passwordEnv] ?? process.env['E2E_PASSWORD'];
+  if (fromEnv) return fromEnv;
+
+  const creds = readCredentialsFile();
+  const fromFile = creds[user.passwordEnv] ?? creds['E2E_PASSWORD'];
+  if (fromFile) return fromFile;
+
+  throw new Error(
+    `No e2e password resolved for seed user "${user.username}" ` +
+      `(checked process.env.${user.passwordEnv}, process.env.E2E_PASSWORD, and the ` +
+      'run-state credentials file — $E2E_CREDENTIALS_FILE or .e2e-credentials ' +
+      'walked up from cwd). Run `make stack-seed` in hugmesh-generator first: it ' +
+      'generates the e2e password and writes .e2e-credentials for consumers like this suite.',
+  );
 }
 
 /**
