@@ -4,3 +4,7 @@ results/
 test-results/
 playwright-report/
 pw-validate.config.ts
+
+# run-state e2e credentials (written by hugmesh-generator's `make stack-seed`;
+# this repo only reads it — see tests/helpers/roles.ts passwordFor()).
+.e2e-credentials
