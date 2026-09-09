@@ -287,8 +287,9 @@ export class ModerationConsoleComponent implements OnInit {
   // (StepUpRequiredException) OR the literal phrase "requires step-up" in the
   // {error} body. mod-bff emits NEITHER: a gate denial is a bare Spring
   // AccessDeniedException 403 with no body and no header — its own
-  // ModStepUpGateControllerTest asserts nothing but isForbidden(), and that repo
-  // has 0 occurrences of X-Step-Up-Required / "requires step-up" /
+  // ModStepUpGateControllerTest asserts nothing but isForbidden() on its five
+  // DENIAL cases (it does assert richer bodies on the ALLOWED paths), and that
+  // repo has 0 occurrences of X-Step-Up-Required / "requires step-up" /
   // StepUpRequiredException. Porting the dialog as-is would therefore be INERT
   // (the predicate could never fire), so it is deliberately NOT done here.
   //
