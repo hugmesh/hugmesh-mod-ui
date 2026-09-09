@@ -275,10 +275,33 @@ export class ModerationConsoleComponent implements OnInit {
     }
   }
 
-  // TODO: ban/lift, domainLock/domainUnlock, and block below submit with no MFA
-  // step-up gate. Platform MFA + a step-up dialog already shipped in admin-ui
-  // (wired into its own sensitive-write consoles); this remote never adopted
-  // the same pattern for its own sensitive writes. See README Roadmap.
+  // TODO: ban/lift, domainLock/domainUnlock and block below still submit with no
+  // inline MFA step-up. The SERVER half already exists — hugmesh-mod-bff-api's
+  // ModStepUpGate is the @PreAuthorize companion on exactly these five endpoints
+  // ("hasAnyRole('MOD','ADMIN') and @modStepUpGate.satisfied(authentication)"),
+  // armed by app.mfa.enforce-sensitive-writes and shipping DARK by default.
+  //
+  // What BLOCKS the admin-ui port is the DENIAL's wire shape, not the dialog.
+  // admin-ui detects step-up with isStepUpRequiredError (mfa/step-up-error.ts),
+  // which needs EITHER the X-Step-Up-Required response header admin-bff stamps
+  // (StepUpRequiredException) OR the literal phrase "requires step-up" in the
+  // {error} body. mod-bff emits NEITHER: a gate denial is a bare Spring
+  // AccessDeniedException 403 with no body and no header — its own
+  // ModStepUpGateControllerTest asserts nothing but isForbidden() on its five
+  // DENIAL cases (it does assert richer bodies on the ALLOWED paths), and that
+  // repo has 0 occurrences of X-Step-Up-Required / "requires step-up" /
+  // StepUpRequiredException. Porting the dialog as-is would therefore be INERT
+  // (the predicate could never fire), so it is deliberately NOT done here.
+  //
+  // Unblocking is a mod-bff (cross-repo) change: make the gate denial carry the
+  // platform signal — e.g. lift the step-up conjunct out of @PreAuthorize into an
+  // explicit check throwing ApiException.forbidden("... requires step-up ..."),
+  // which the EXISTING legacy-phrase leg already matches with no UI release.
+  //
+  // Consequence today, once that flag is armed: ModBffService collapses every
+  // write failure to null, so surfaceBan/surfaceDomainLock below explain a step-up
+  // denial as "you cannot ban yourself or a moderator/administrator" — a wrong
+  // reason with no path forward. See README Roadmap.
   // ── Ban / lift ─────────────────────────────────────────────────────
   /** Parse the ttlSeconds field: blank => undefined (permanent ban). */
   private parsedTtl(): number | undefined {
