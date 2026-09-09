@@ -397,11 +397,21 @@ checkout to use `make pentest-dast` locally.
 
 - 🔭 **Wire the remaining `@cluster` e2e scenarios into CI** — promote the live-cluster-only
   Playwright + BDD scenarios into the pipeline once a cluster is available to the runner.
-- 🔭 **MFA / step-up awareness** — platform-wide MFA has shipped (Casdoor TOTP enroll/challenge, a
-  session-level `MFA_SATISFIED` authority, and a step-up dialog already live in `login-ui` and
-  `hugmesh-admin-ui`), but this remote hasn't adopted it yet: its sensitive writes (ban,
-  domain-lock, server-wide block) currently go through with no step-up gate. Wiring the same
-  pattern here — no new design needed — is an open gap.
+- 🔭 **MFA / step-up awareness — BLOCKED on a mod-bff wire change, not on this remote.**
+  Platform-wide MFA has shipped (Casdoor TOTP enroll/challenge, a session-level `MFA_SATISFIED`
+  authority, and a step-up dialog already live in `login-ui` and `hugmesh-admin-ui`), and
+  hugmesh-mod-bff-api already gates this console's five sensitive writes (`POST /block`,
+  `POST|DELETE /ban`, `POST|DELETE /domain-lock/{role}/{user}`) with `ModStepUpGate` behind the
+  dark-by-default `app.mfa.enforce-sensitive-writes`. What is missing is the DENIAL SIGNAL, not
+  the dialog: admin-ui's `isStepUpRequiredError` fires on the `X-Step-Up-Required` response header
+  or the literal `"requires step-up"` phrase, and mod-bff emits neither — a gate denial is a bare
+  Spring `AccessDeniedException` 403 with no body and no header. Porting the dialog as-is would be
+  INERT, so it has deliberately not been done. **Unblock it in mod-bff first** (e.g. lift the
+  step-up conjunct out of `@PreAuthorize` into an explicit check throwing
+  `ApiException.forbidden("… requires step-up …")`, which the existing legacy-phrase leg already
+  matches); the UI port is small once a denial is distinguishable. Note the current cost: because
+  `ModBffService` collapses every write failure to `null`, an armed deployment reports a step-up
+  denial as *"you cannot ban yourself or a moderator/administrator"*.
 - 🔭 **Server-wide block, real backend for Mastodon** — the Mastodon (akkoma) leg is already wired
   to confirmed `pleroma-admin` verbs but ships dark by default behind
   `external.mastodon.enabled`; flipping it on in a given deployment is an operations task, not a UI
