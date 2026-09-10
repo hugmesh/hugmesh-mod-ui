@@ -2,7 +2,14 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { ModerationConsoleComponent } from './moderation-console.component';
-import { BlockResult, ModAction, ModBffService, ModerationRequest, SystemFinding } from './mod-bff.service';
+import {
+  BlockResult,
+  ModAction,
+  ModBffService,
+  ModerationRequest,
+  PendingReconcile,
+  SystemFinding,
+} from './mod-bff.service';
 import { ModWriteError, ModWriteResult } from './mod-write-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
@@ -636,6 +643,79 @@ describe('ModerationConsoleComponent', () => {
   });
 
   // ── DISABLED + helptext (V7: no mod-bff endpoint) ───────────────────
+  /**
+   * The cross-user DENY steps in `e2e/features/steps/moderation-steps.ts`
+   * (`expectDeniedAtDenyStatus`) assert a REGEX against the announced text — and
+   * they can be checked nowhere else: those scenarios are `@cluster`, ship dark,
+   * and neither this host nor CI has Playwright installed. So the regex is
+   * mirrored here and run against the REAL component output.
+   *
+   * <p>The invariant is the one `e2e/features/cross-user/mod-isolation.feature`
+   * documents for itself: the mod-bff "returns 403/404 (fail-closed)", and its own
+   * API-layer scenarios assert `403 or 404` for exactly these targets. An earlier
+   * revision of the step pinned 403 alone, which would have failed the whole
+   * scenario on the 404 branch of the contract.
+   *
+   * <p>If you change the sentence `describeWriteFailure` renders, change BOTH —
+   * this block is the only thing that will tell you.
+   */
+  describe('e2e cross-user DENY step regex (mirrored: nothing else can run it)', () => {
+    const deniedAt = (action: string) =>
+      new RegExp(`the ${action} was (refused|not applied) \u2014 http (403|404)\\b`);
+    const OLD_ACCUSATION = /was rejected \u2014 you cannot/;
+
+    it('matches a 403 and a 404 ban refusal, with and without a server reason', async () => {
+      fixture.detectChanges();
+      for (const result of [
+        failed<PendingReconcile>(403, 'Forbidden'),
+        failed<PendingReconcile>(404, 'Not Found'),
+        failed<PendingReconcile>(403, 'Forbidden', 'target is a moderator'),
+        failed<PendingReconcile>(404, 'Not Found', 'no such user'),
+        // What an HTTP/2 deployment actually delivers: no reason phrase on the
+        // wire, so Angular's XHR backend substitutes 'OK' on the error too.
+        failed<PendingReconcile>(403, 'OK'),
+      ]) {
+        bff.ban.and.resolveTo(result);
+        component.banTarget = 'an-admin';
+        await component.ban();
+        const text = component.banError().toLowerCase();
+        expect(text).withContext(text).toMatch(deniedAt('ban'));
+        expect(text).withContext(text).not.toMatch(OLD_ACCUSATION);
+      }
+    });
+
+    it('matches a 403 and a 404 domain-lock refusal', async () => {
+      fixture.detectChanges();
+      for (const result of [
+        failed<PendingReconcile>(403, 'Forbidden'),
+        failed<PendingReconcile>(404, 'Not Found'),
+        failed<PendingReconcile>(403, 'OK'),
+      ]) {
+        bff.domainLock.and.resolveTo(result);
+        component.domainLockUser = 'a-mod';
+        await component.domainLock();
+        const text = component.domainLockError().toLowerCase();
+        expect(text).withContext(text).toMatch(deniedAt('domain-lock'));
+        expect(text).withContext(text).not.toMatch(OLD_ACCUSATION);
+      }
+    });
+
+    it('renders the alert in the role=alert region the step locates', async () => {
+      bff.ban.and.resolveTo(failed<PendingReconcile>(403, 'Forbidden'));
+      fixture.detectChanges();
+      component.banTarget = 'an-admin';
+      await component.ban();
+      fixture.detectChanges();
+      // The region is @if-gated on banError(), so it only exists once a write
+      // has actually failed — which is the state the e2e step observes.
+      const alert: HTMLElement | null = fixture.nativeElement.querySelector('[data-testid="mc-ban-error"]');
+      expect(alert).withContext('mc-ban-error must be rendered for the e2e locator').not.toBeNull();
+      expect(alert!.getAttribute('role')).toBe('alert');
+      expect(alert!.getAttribute('aria-live')).toBe('assertive');
+      expect((alert!.textContent ?? '').toLowerCase()).toMatch(deniedAt('ban'));
+    });
+  });
+
   describe('admin-only / no-endpoint controls render disabled + helptext', () => {
     function expectDisabledWithHelp(testid: string, helpId: string) {
       fixture.detectChanges();

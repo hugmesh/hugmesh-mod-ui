@@ -39,6 +39,14 @@ import { HttpErrorResponse } from '@angular/common/http';
  * changed here is only that a signal, whenever mod-bff starts sending one, now
  * REACHES UI code instead of being swallowed. See hugmesh-mod-ui#14.
  */
+/**
+ * <p>CORS caveat for whoever lands #1: this is a NON-SIMPLE response header, so
+ * JS can only read it when the response carries
+ * {@code Access-Control-Expose-Headers: X-Step-Up-Required}. mod-ui is
+ * same-origin today (the generated {@code rootUrl} is {@code ''} and every path
+ * is {@code /bff/mod/**}), so nothing is broken — but confirm the gateway
+ * exposes it before relying on the header leg over the body-phrase leg.
+ */
 export const STEP_UP_SIGNAL_HEADER = 'X-Step-Up-Required';
 
 /** Longest server sentence we will echo into the console verbatim. */
@@ -82,6 +90,119 @@ export function serverMessageOf(body: unknown): string | null {
   const text = rec['text'];
   if (typeof text === 'string' && text.trim()) return serverMessageOf(text);
   return null;
+}
+
+/**
+ * Canonical HTTP reason phrases, by status.
+ *
+ * <h2>Why the client needs its own table</h2>
+ * HTTP/2 and HTTP/3 removed the reason phrase from the wire entirely, so
+ * {@code xhr.statusText} is the empty string for EVERY response over those
+ * protocols. Angular does not leave it empty — its XHR backend substitutes a
+ * literal: {@code const statusText = xhr.statusText || 'OK'}
+ * ({@code @angular/common/fesm2022/_module-chunk.mjs:1649}), and
+ * {@code 'Unknown Error'} on the transport-failure path (:1717). Its fetch
+ * backend (:829) passes {@code response.statusText} straight through, which
+ * over h2 is {@code ''}.
+ *
+ * <p>Both are traps for a client that trusts {@code statusText}: a 403 over h2
+ * arrives with {@code statusText === 'OK'}, which renders as the
+ * self-contradicting {@code "HTTP 403 OK"} and — worse — stops matching the
+ * reason phrase Spring puts in its {@code {error}} field, so the envelope
+ * {@code {timestamp,status,error:"Forbidden",path}} gets ECHOED as if it were a
+ * real explanation, which in turn suppresses the caller's hint. This app is
+ * exposed to exactly that: {@code src/bootstrap.ts:20} calls
+ * {@code provideHttpClient(withInterceptors([authInterceptor]))} with no
+ * {@code withFetch()}, so the XHR backend is in play, and in production the
+ * host shell chooses the backend for us.
+ *
+ * <p>So the phrase we DISPLAY and the phrase we compare a server message
+ * against both come from the status, not from the wire. See hugmesh-mod-ui#14.
+ */
+const REASON_PHRASES: Readonly<Record<number, string>> = {
+  200: 'OK',
+  201: 'Created',
+  202: 'Accepted',
+  204: 'No Content',
+  400: 'Bad Request',
+  401: 'Unauthorized',
+  402: 'Payment Required',
+  403: 'Forbidden',
+  404: 'Not Found',
+  405: 'Method Not Allowed',
+  406: 'Not Acceptable',
+  408: 'Request Timeout',
+  409: 'Conflict',
+  410: 'Gone',
+  412: 'Precondition Failed',
+  413: 'Payload Too Large',
+  415: 'Unsupported Media Type',
+  422: 'Unprocessable Entity',
+  423: 'Locked',
+  428: 'Precondition Required',
+  429: 'Too Many Requests',
+  431: 'Request Header Fields Too Large',
+  451: 'Unavailable For Legal Reasons',
+  500: 'Internal Server Error',
+  501: 'Not Implemented',
+  502: 'Bad Gateway',
+  503: 'Service Unavailable',
+  504: 'Gateway Timeout',
+  505: 'HTTP Version Not Supported',
+};
+
+/**
+ * True when {@code statusText} is a phrase Angular INVENTED rather than one the
+ * server sent — see {@link REASON_PHRASES}. {@code 'OK'} on a non-2xx is always
+ * the substitution (no server sends it); so are the two transport literals.
+ */
+function isSubstitutedPhrase(status: number, statusText: string): boolean {
+  const t = statusText.trim().toLowerCase();
+  if (!t) return true;
+  if (t === 'ok') return status < 200 || status >= 300;
+  return t === 'unknown error' || t === 'request timeout';
+}
+
+/**
+ * The reason phrase to SHOW for a response: the server's own when it really
+ * sent one, the canonical phrase for the status when it did not (h2/h3), and
+ * nothing at all for a status with no canonical phrase.
+ */
+export function displayReason(status: number, statusText: string): string {
+  if (!isSubstitutedPhrase(status, statusText)) return statusText.trim();
+  return REASON_PHRASES[status] ?? '';
+}
+
+/**
+ * True when a body's "message" is nothing but the status reason phrase — the
+ * shape of Spring's default envelope, whose {@code error} field is the phrase
+ * and not an explanation. Compared against the CANONICAL phrase for the status
+ * (so it still holds over h2, where {@code statusText} is a fabrication) as well
+ * as against a genuine wire phrase.
+ */
+function isOnlyReasonPhrase(message: string, status: number, statusText: string): boolean {
+  const m = message.trim().toLowerCase();
+  if (!m) return true;
+  const canonical = REASON_PHRASES[status];
+  if (canonical && m === canonical.toLowerCase()) return true;
+  const shown = displayReason(status, statusText).toLowerCase();
+  return !!shown && m === shown;
+}
+
+/**
+ * True when the body is an HTML page rather than an API response — a gateway or
+ * nginx interstitial. {@link serverMessageOf} and {@link bodySnippetOf} both
+ * (correctly) refuse to echo one, which would otherwise leave the sentence with
+ * no reason at all and let the caller's hint be offered for a refusal that never
+ * reached the moderation service.
+ */
+export function isHtmlBody(body: unknown): boolean {
+  if (typeof body === 'string') return body.trim().startsWith('<');
+  if (body && typeof body === 'object') {
+    const text = (body as Record<string, unknown>)['text'];
+    return typeof text === 'string' && text.trim().startsWith('<');
+  }
+  return false;
 }
 
 /** A short, safe rendering of a body that carried no recognisable message. */
@@ -202,24 +323,54 @@ export function writeFailed<T>(error: ModWriteError): ModWriteResult<T> {
  *        wrong.
  */
 export function describeWriteFailure(error: ModWriteError, action: string, hint?: string): string {
+  // The phrase comes from the STATUS, never from the wire: over HTTP/2 there is
+  // no reason phrase and Angular substitutes 'OK', which would otherwise render
+  // "HTTP 403 OK" and make Spring's `{error:"Forbidden"}` envelope look like a
+  // real explanation. See REASON_PHRASES.
+  const reason = displayReason(error.status, error.statusText);
   const hasSaid =
-    !!error.serverMessage && error.serverMessage.toLowerCase() !== error.statusText.toLowerCase();
+    !!error.serverMessage && !isOnlyReasonPhrase(error.serverMessage, error.status, error.statusText);
   const said = hasSaid ? ` The server said: "${error.serverMessage}".` : '';
   // If the body carried a message at all we either show it (hasSaid) or it was
   // nothing but the status reason phrase — in both cases dumping the raw body on
   // top of it adds noise and, worse, would suppress the caller's hint.
   const rawBody = error.serverMessage ? null : bodySnippetOf(error.body);
   const snippet = rawBody ? ` Response body: ${rawBody}.` : '';
+  // A gateway interstitial is not an API reason, but it IS a fact worth stating:
+  // it says the refusal probably never reached the moderation service, and it
+  // stops the hint being offered for a denial the hint cannot explain.
+  const interstitial =
+    !hasSaid && !rawBody && isHtmlBody(error.body)
+      ? ' The response was an HTML error page rather than an API response, so it probably came from' +
+        ' the gateway and not the moderation service.'
+      : '';
   // What the server said, if anything — and only if it said nothing, the caller's
   // hint, explicitly marked as OUR guess rather than the server's word.
-  const because = said || snippet;
+  const because = said || snippet || interstitial;
   const offered = because || !hint ? '' : ` The server gave no reason; ${hint}`;
+  // Carried on ANY status, so it is RENDERED on any status: a gate may deny with
+  // 401, or with 428 Precondition Required (the conventional step-up status), and
+  // announcing "sign in again" while dropping the signal would be the same class
+  // of wrong answer this whole change exists to remove.
   const stepUp = error.stepUpSignal
     ? ` The server signalled that a fresh MFA step-up is required (${STEP_UP_SIGNAL_HEADER}: ${error.stepUpSignal});` +
       ' this console cannot complete a step-up yet, so the action cannot be retried here.'
     : '';
-  const at = `HTTP ${error.status}${error.statusText ? ` ${error.statusText}` : ''}`;
+  const at = `HTTP ${error.status}${reason ? ` ${reason}` : ''}`;
 
+  return `${sentence(error, action, at, said, snippet, because, offered)}${stepUp}`;
+}
+
+/** The status-determined half of {@link describeWriteFailure}'s sentence. */
+function sentence(
+  error: ModWriteError,
+  action: string,
+  at: string,
+  said: string,
+  snippet: string,
+  because: string,
+  offered: string,
+): string {
   if (error.noResponse) {
     return (
       `The ${action} got NO response from the server (${error.message}). ` +
@@ -230,13 +381,19 @@ export function describeWriteFailure(error: ModWriteError, action: string, hint?
     return `The ${action} was not accepted — ${at}: your session is no longer valid. Sign in again and retry.${said}`;
   }
   if (error.status === 403) {
-    return `The ${action} was refused — ${at}.${because}${offered}${stepUp}`;
+    return `The ${action} was refused — ${at}.${because}${offered}`;
   }
   if (error.status === 404) {
     return `The ${action} was not applied — ${at}: the target or record was not found.${because}${offered}`;
   }
   if (error.status === 409) {
     return `The ${action} conflicted with the current state — ${at}.${because}${offered}`;
+  }
+  if (error.status === 428) {
+    // The conventional step-up status. The privileged/self-target hint is NOT
+    // offered here — 428 already settles the cause, and the step-up clause
+    // describeWriteFailure appends says the rest.
+    return `The ${action} was not applied — ${at}: the server requires a further precondition before it will accept this.${because}`;
   }
   if (error.status === 429) {
     return `The ${action} was rate-limited — ${at}. Wait and retry.${said}${snippet}`;

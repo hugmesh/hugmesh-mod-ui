@@ -266,32 +266,48 @@ Then('{string} sees the block recorded note', async ({ user }, username: string)
 // region. We assert that announced refusal appears (the user-facing half of the
 // defence-in-depth).
 //
-// What is asserted is the INVARIANT, not one sentence: a refusal announced AT
-// HTTP 403. Since hugmesh-mod-ui#14 the console prints the server's OWN reason
-// when mod-bff supplies one and only falls back to the privileged/self-target
-// possibility when it does not — so pinning the old fixed accusation string here
-// would fail the moment the API starts explaining itself, which is a change we
-// want, not a regression.
+// What is asserted is the INVARIANT, not one sentence. Two things make a fixed
+// string wrong here:
+//   1. Since hugmesh-mod-ui#14 the console prints the server's OWN reason when
+//      mod-bff supplies one, and only falls back to the privileged/self-target
+//      possibility when it does not — so pinning the old fixed accusation would
+//      fail the moment the API starts explaining itself, which is a change we
+//      want, not a regression.
+//   2. This feature's own API-layer scenarios (below) assert "403 or 404" for
+//      exactly these targets, because the mod-bff is free to fail closed either
+//      way — a 404 hides whether the target even exists. Pinning 403 alone would
+//      fail on the 404 branch of the contract this file documents, and neither
+//      CI nor this host can run these scenarios to catch it (they are @cluster
+//      and ship dark).
+// So: an accessible alert, naming THIS action, refused or not-applied, at a
+// status inside the documented DENY set — and never the old asserted accusation.
 
-/** The refusal invariant both cross-user DENY steps assert. */
-async function expectRefusedAt403(err: Locator): Promise<void> {
+/** The DENY invariant both cross-user steps assert, for `ban` or `domain-lock`. */
+async function expectDeniedAtDenyStatus(err: Locator, action: string): Promise<void> {
   await expect(err).toBeVisible();
   await expect(err).toHaveAttribute('role', 'alert');
   const text = (await err.textContent())?.toLowerCase() ?? '';
-  expect(text).toContain('refused');
-  expect(text).toContain('http 403');
+  // `describeWriteFailure` renders "The <action> was refused — HTTP 403 …" and
+  // "The <action> was not applied — HTTP 404 …"; anything the server explained
+  // is appended AFTER, so this matches with or without a server reason.
+  expect(text).toMatch(
+    new RegExp(`the ${action} was (refused|not applied) \u2014 http (403|404)\\b`),
+  );
+  // The defect #14 fixed: a cause asserted as fact for every failure. The
+  // privileged/self-target rule may now only be OFFERED, after "gave no reason".
+  expect(text).not.toMatch(/was rejected \u2014 you cannot/);
 }
 
 Then('{string} sees the ban rejected alert', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
   const err = page.locator('[data-testid="mc-ban-error"]');
   await expect(err).toHaveAttribute('aria-live', 'assertive');
-  await expectRefusedAt403(err);
+  await expectDeniedAtDenyStatus(err, 'ban');
 });
 
 Then('{string} sees the domain-lock rejected alert', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
-  await expectRefusedAt403(page.locator('[data-testid="mc-dl-error"]'));
+  await expectDeniedAtDenyStatus(page.locator('[data-testid="mc-dl-error"]'), 'domain-lock');
 });
 
 // ── Required-field validation (USER-SITUATIONAL, runs offline) ──────────────

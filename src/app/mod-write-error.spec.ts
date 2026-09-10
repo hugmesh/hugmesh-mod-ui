@@ -4,6 +4,8 @@ import {
   STEP_UP_SIGNAL_HEADER,
   bodySnippetOf,
   describeWriteFailure,
+  displayReason,
+  isHtmlBody,
   serverMessageOf,
 } from './mod-write-error';
 
@@ -212,6 +214,95 @@ describe('mod-write-error', () => {
       );
       expect(text).toContain('HTTP 200 OK');
       expect(text).toContain('did not complete');
+    });
+
+    // ── HTTP/2 regression (the skeptic's major on hugmesh-mod-ui#14) ─────────
+    // HTTP/2 and HTTP/3 carry no reason phrase, so `xhr.statusText` is '' and
+    // Angular's XHR backend substitutes 'OK' (_module-chunk.mjs:1649) on EVERY
+    // response including errors. bootstrap.ts:20 uses provideHttpClient without
+    // withFetch(), so this deployment gets that backend. These four cases are
+    // what a 403 actually looks like there, and each one failed before the
+    // status-derived REASON_PHRASES table replaced the trust in statusText.
+    it('does not render the self-contradicting "HTTP 403 OK" an h2 response produces', () => {
+      const text = describeWriteFailure(bare(403, 'OK'), 'ban', hint);
+      expect(text).toContain('HTTP 403 Forbidden');
+      expect(text).not.toContain('HTTP 403 OK');
+    });
+
+    it('still offers the hint for Spring’s default 403 envelope over h2', () => {
+      // {timestamp,status,error:"Forbidden",path} with statusText substituted to
+      // 'OK'. Comparing the message against 'OK' let "Forbidden" through as if it
+      // were an explanation, which suppressed the hint this change exists to give.
+      const e = new ModWriteError('Forbidden', 403, 'OK', { error: 'Forbidden' }, 'Forbidden', null);
+      const text = describeWriteFailure(e, 'ban', hint);
+      expect(text).toContain('gave no reason');
+      expect(text).toContain('privileged or self target');
+      expect(text).not.toContain('The server said');
+    });
+
+    it('still shows a REAL server sentence over h2', () => {
+      const e = new ModWriteError('x', 403, 'OK', { error: 'domain not yours' }, 'domain not yours', null);
+      const text = describeWriteFailure(e, 'ban', hint);
+      expect(text).toContain('domain not yours');
+      expect(text).not.toContain('gave no reason');
+    });
+
+    it('falls back to the canonical phrase when statusText is empty (fetch backend over h2)', () => {
+      expect(describeWriteFailure(bare(404, ''), 'lift')).toContain('HTTP 404 Not Found');
+      expect(describeWriteFailure(bare(503, ''), 'lift')).toContain('HTTP 503 Service Unavailable');
+      // A status with no canonical phrase renders the bare number, not a lie.
+      expect(describeWriteFailure(bare(499, ''), 'lift')).toContain('HTTP 499.');
+    });
+
+    // ── Step-up rendering (the skeptic's nit 1) ─────────────────────────────
+    it('renders the step-up signal on 401 and 428, not only on 403', () => {
+      const gone = new ModWriteError('x', 401, 'Unauthorized', null, null, 'totp');
+      expect(describeWriteFailure(gone, 'ban', hint)).toContain(`${STEP_UP_SIGNAL_HEADER}: totp`);
+      const precondition = new ModWriteError('x', 428, 'Precondition Required', null, null, 'totp');
+      const text = describeWriteFailure(precondition, 'ban', hint);
+      expect(text).toContain('HTTP 428 Precondition Required');
+      expect(text).toContain(`${STEP_UP_SIGNAL_HEADER}: totp`);
+      // 428 settles its own cause — the privileged/self-target guess is NOT offered.
+      expect(text).not.toContain('privileged or self target');
+    });
+
+    // ── Gateway interstitial (the skeptic's nit 3) ──────────────────────────
+    it('says an HTML 403 came from the gateway instead of offering the target hint', () => {
+      const e = new ModWriteError('x', 403, 'Forbidden', '<html><body>403 Forbidden</body></html>', null, null);
+      const text = describeWriteFailure(e, 'ban', hint);
+      expect(text).toContain('HTML error page');
+      expect(text).not.toContain('privileged or self target');
+      expect(text).not.toContain('<html>');
+    });
+  });
+
+  describe('displayReason', () => {
+    it('keeps a genuine wire phrase', () => {
+      expect(displayReason(403, 'Forbidden')).toBe('Forbidden');
+      expect(displayReason(418, 'I am a teapot')).toBe('I am a teapot');
+    });
+
+    it('discards Angular’s substitutions on a non-2xx', () => {
+      expect(displayReason(403, 'OK')).toBe('Forbidden');
+      expect(displayReason(0, 'Unknown Error')).toBe('');
+      expect(displayReason(500, 'Unknown Error')).toBe('Internal Server Error');
+    });
+
+    it('keeps OK on a real 2xx', () => {
+      expect(displayReason(200, 'OK')).toBe('OK');
+    });
+  });
+
+  describe('isHtmlBody', () => {
+    it('detects a raw HTML page and one wrapped in Angular’s {text}', () => {
+      expect(isHtmlBody('<!doctype html><html>')).toBe(true);
+      expect(isHtmlBody({ text: '  <html>403</html>' })).toBe(true);
+    });
+
+    it('is false for JSON, text and nothing', () => {
+      expect(isHtmlBody({ error: 'nope' })).toBe(false);
+      expect(isHtmlBody('plain refusal')).toBe(false);
+      expect(isHtmlBody(null)).toBe(false);
     });
   });
 });

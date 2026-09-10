@@ -209,7 +209,22 @@ Writes do not. Every write (`refer`, `recommend`, `block`, `ban`, `lift`, `domai
 `describeWriteFailure()` turns one into the sentence the console announces, under a single rule:
 **never assert a reason the client cannot know.** A 403 with no body is announced as a refusal at
 that status with the privileged/self-target rule offered as a *possibility*; a 5xx or a status-0
-drop says the write may or may not have applied and points at the audit trail.
+drop says the write may or may not have applied and points at the audit trail; an HTML body is
+named as a gateway interstitial rather than treated as an API reason, and the hint is withheld
+because it cannot explain a refusal that never reached the moderation service. The
+`X-Step-Up-Required` clause is rendered on **whatever** status carried it — 401 and 428
+Precondition Required included — not only on 403.
+
+> **Do not trust `statusText`.** HTTP/2 and HTTP/3 carry no reason phrase, so `xhr.statusText` is
+> `''` for every response, and Angular's XHR backend substitutes a literal — `xhr.statusText || 'OK'`
+> (`@angular/common/fesm2022/_module-chunk.mjs:1649`), or `'Unknown Error'` on a transport failure
+> (`:1717`); its fetch backend (`:829`) passes the empty string through. `bootstrap.ts` calls
+> `provideHttpClient(...)` with no `withFetch()`, and in production the host shell picks the backend,
+> so both are live. Trusting it renders the self-contradicting `HTTP 403 OK`, and — worse — stops
+> `serverMessage` matching the reason phrase, so Spring's default
+> `{timestamp,status,error:"Forbidden",path}` envelope gets echoed as if it were an explanation,
+> which suppresses the hint. `mod-write-error.ts` therefore derives the displayed phrase, and the
+> phrase it compares a message against, from `REASON_PHRASES[status]` — not from the wire.
 
 This replaced a `.catch(() => null)` on all seven write paths, which made a step-up 403, an
 expired session, a gateway 502 and an offline browser indistinguishable — the console announced

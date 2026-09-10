@@ -5,9 +5,11 @@
 #   - SELF,
 #   - a CROSS-TENANT user/instance (a domain-A mod on a domain-B target).
 #
-# The display-layer rejection (the role=alert "refused — HTTP 403" announcement,
-# which names the privileged/self-target rule as the likely cause only when the
-# API gave no reason of its own) is backed by an API-layer DENY: the
+# The display-layer rejection (the role=alert "refused — HTTP 403" / "not applied
+# — HTTP 404" announcement, which names the privileged/self-target rule as the
+# likely cause only when the API gave no reason of its own — and which the UI
+# steps below match across BOTH statuses, because the API-layer scenarios in this
+# same file assert "403 or 404") is backed by an API-layer DENY: the
 # mod-bff re-enforces the privileged/self/tenant guard and returns 403/404
 # (fail-closed) even if the UI were bypassed. Two identities coexist in one
 # scenario (each in its own context) so the isolation is asserted with both users
