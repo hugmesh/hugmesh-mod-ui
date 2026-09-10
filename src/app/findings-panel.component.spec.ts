@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { BehaviorSubject } from 'rxjs';
 import { FindingsPanelComponent } from './findings-panel.component';
 import { ModBffService, SystemFinding } from './mod-bff.service';
+import { ModWriteError, ModWriteResult } from './mod-write-error';
 
 const finding: SystemFinding = {
   id: 42,
@@ -19,6 +20,26 @@ const finding: SystemFinding = {
   domain: 'hugmesh.net',
 };
 
+/** A successful write, in the shape ModBffService now resolves to (#14). */
+function ok<T>(value: T): ModWriteResult<T> {
+  return { ok: true, value };
+}
+
+/** A failed write carrying the status the panel must report instead of guessing. */
+function failed<T>(status: number, statusText: string, serverMessage: string | null = null): ModWriteResult<T> {
+  return {
+    ok: false,
+    error: new ModWriteError(
+      serverMessage ?? `Http failure response: ${status} ${statusText}`,
+      status,
+      statusText,
+      serverMessage === null ? null : { error: serverMessage },
+      serverMessage,
+      null,
+    ),
+  };
+}
+
 describe('FindingsPanelComponent', () => {
   let fixture: ComponentFixture<FindingsPanelComponent>;
   let component: FindingsPanelComponent;
@@ -34,7 +55,7 @@ describe('FindingsPanelComponent', () => {
       { findings: findings$.asObservable() },
     );
     bff.loadFindings.and.resolveTo([finding]);
-    bff.resolveFinding.and.resolveTo({ ...finding, status: 'actioned', reviewer: 'mod:bob' });
+    bff.resolveFinding.and.resolveTo(ok({ ...finding, status: 'actioned', reviewer: 'mod:bob' }));
 
     await TestBed.configureTestingModule({
       imports: [FindingsPanelComponent],
@@ -119,11 +140,21 @@ describe('FindingsPanelComponent', () => {
       expect(component.resolveNote()).toContain('dismissed');
     });
 
-    it('surfaces a server rejection (e.g. cross-domain / already resolved)', async () => {
-      bff.resolveFinding.and.resolveTo(null);
+    it('surfaces a 404 with its status, offering cross-domain / already-resolved as the hint', async () => {
+      bff.resolveFinding.and.resolveTo(failed(404, 'Not Found'));
       fixture.detectChanges();
       await component.confirm(42);
-      expect(component.resolveNote().toLowerCase()).toContain('rejected');
+      expect(component.resolveNote()).toContain('HTTP 404');
+      expect(component.resolveNote()).toContain('another domain');
+    });
+
+    // #14: a 5xx must not be explained as "already resolved / another domain".
+    it('does NOT guess a cross-domain cause when the resolve failed server-side', async () => {
+      bff.resolveFinding.and.resolveTo(failed(503, 'Service Unavailable'));
+      fixture.detectChanges();
+      await component.confirm(42);
+      expect(component.resolveNote()).toContain('HTTP 503');
+      expect(component.resolveNote()).not.toContain('another domain');
     });
 
     it('drives the BFF when a resolve button is activated by a keyboard-style click', () => {

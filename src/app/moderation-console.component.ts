@@ -12,10 +12,22 @@ import {
   PendingReconcile,
   RecommendRequest,
 } from './mod-bff.service';
+import { ModWriteResult, describeWriteFailure } from './mod-write-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
 import { accessibleName } from './accessible-name';
 import { TargetTypeaheadComponent } from './target-typeahead.component';
+
+/**
+ * What an ambiguous refusal of a sensitive mod write USUALLY means — offered as a
+ * possibility, and ONLY when the server gave no reason of its own. Two different
+ * rules return a bare 403 on these endpoints (the privileged/self-target guard,
+ * and mod-bff's ModStepUpGate once armed), which is exactly why the console must
+ * not assert either one. See hugmesh-mod-ui#14.
+ */
+const FORBIDDEN_HINT =
+  'it is usually a privileged or self target (which this console already disables where it ' +
+  'can), but the mod-bff step-up (MFA) gate refuses with a bare 403 too.';
 
 /**
  * Moderation console (ROLE_MOD / ROLE_ADMIN only, route-guarded). The single
@@ -101,8 +113,8 @@ export class ModerationConsoleComponent implements OnInit {
   readonly decidingIds = signal<Set<number>>(new Set());
   /** Surfaced honestly on a failed/degraded decide — never rendered as applied. */
   readonly decideError = signal('');
-  /** Surfaced honestly when a refer fails (bff.refer resolved null) — every other
-   *  write in this console announces its failure, so refer must not be silent. */
+  /** Surfaced honestly when a refer fails — every other write in this console
+   *  announces its failure, so refer must not be silent. */
   readonly referError = signal('');
 
   // ── Queue status filter ────────────────────────────────────────────
@@ -192,17 +204,24 @@ export class ModerationConsoleComponent implements OnInit {
   }
 
   /**
-   * Escalate a queue item up to an admin (the only mod removal path). A {@code
-   * null} result means the refer was rejected server-side (e.g. the row was
-   * already decided, or a 404/5xx) — surface it honestly instead of silently
-   * leaving the row un-referred (bff.refer already reloaded the queue, so a real
-   * success is reflected by the row flipping to `referred`).
+   * Escalate a queue item up to an admin (the only mod removal path). A
+   * {@code !ok} result means the refer did not take (the row was already decided,
+   * a 404/5xx, an expired session, an offline browser) — surface WHAT THE SERVER
+   * SAID instead of silently leaving the row un-referred or guessing a reason
+   * (bff.refer already reloaded the queue, so a real success is reflected by the
+   * row flipping to `referred`).
    */
   async refer(id: number): Promise<void> {
     this.referError.set('');
     const referred = await this.bff.refer(id);
-    if (!referred) {
-      this.referError.set(`Could not refer request #${id} — it was NOT escalated (it may already be decided or referred).`);
+    if (!referred.ok) {
+      this.referError.set(
+        describeWriteFailure(
+          referred.error,
+          `referral of request #${id}`,
+          'it may already be decided or referred, or outside your domain.',
+        ),
+      );
     }
   }
 
@@ -242,12 +261,14 @@ export class ModerationConsoleComponent implements OnInit {
       target: this.recommendTarget.trim(),
       reason: this.recommendReason.trim() || undefined,
     });
-    if (result) {
+    if (result.ok) {
       this.recommendNote.set('Recommendation recorded in the federation queue for an admin to decide.');
       this.recommendTarget = '';
       this.recommendReason = '';
     } else {
-      this.recommendError.set('The recommendation was rejected by the server.');
+      this.recommendError.set(
+        describeWriteFailure(result.error, 'recommendation', 'your MOD/ADMIN role may not cover this target.'),
+      );
     }
   }
 
@@ -266,20 +287,21 @@ export class ModerationConsoleComponent implements OnInit {
       target: this.target.trim(),
       reason: this.reason.trim() || undefined,
     });
-    if (result) {
-      this.blockNote.set(result.note ?? `Recorded. External result: ${result.external}.`);
+    if (result.ok) {
+      this.blockNote.set(result.value.note ?? `Recorded. External result: ${result.value.external}.`);
       this.target = '';
       this.reason = '';
     } else {
-      this.blockError.set('The block was rejected by the server.');
+      this.blockError.set(describeWriteFailure(result.error, 'block', FORBIDDEN_HINT));
     }
   }
 
   // TODO: ban/lift, domainLock/domainUnlock and block below still submit with no
-  // inline MFA step-up. The SERVER half already exists — hugmesh-mod-bff-api's
-  // ModStepUpGate is the @PreAuthorize companion on exactly these five endpoints
-  // ("hasAnyRole('MOD','ADMIN') and @modStepUpGate.satisfied(authentication)"),
-  // armed by app.mfa.enforce-sensitive-writes and shipping DARK by default.
+  // inline MFA step-up (hugmesh-mod-ui#1). The SERVER half already exists —
+  // hugmesh-mod-bff-api's ModStepUpGate is the @PreAuthorize companion on exactly
+  // these five endpoints ("hasAnyRole('MOD','ADMIN') and
+  // @modStepUpGate.satisfied(authentication)"), armed by
+  // app.mfa.enforce-sensitive-writes and shipping DARK by default.
   //
   // What BLOCKS the admin-ui port is the DENIAL's wire shape, not the dialog.
   // admin-ui detects step-up with isStepUpRequiredError (mfa/step-up-error.ts),
@@ -298,10 +320,14 @@ export class ModerationConsoleComponent implements OnInit {
   // explicit check throwing ApiException.forbidden("... requires step-up ..."),
   // which the EXISTING legacy-phrase leg already matches with no UI release.
   //
-  // Consequence today, once that flag is armed: ModBffService collapses every
-  // write failure to null, so surfaceBan/surfaceDomainLock below explain a step-up
-  // denial as "you cannot ban yourself or a moderator/administrator" — a wrong
-  // reason with no path forward. See README Roadmap.
+  // FIXED since (hugmesh-mod-ui#14), and the reason the above is now the ONLY
+  // blocker: ModBffService no longer collapses write failures to null. Every
+  // write returns a ModWriteResult carrying the status, the response body and the
+  // X-Step-Up-Required header, and surfaceBan/surfaceDomainLock below report what
+  // the server actually said instead of asserting "you cannot ban yourself or a
+  // moderator/administrator" for every failure. So the moment mod-bff signals a
+  // step-up — by either the header or the phrase — the signal REACHES UI code.
+  // See README Roadmap.
   // ── Ban / lift ─────────────────────────────────────────────────────
   /** Parse the ttlSeconds field: blank => undefined (permanent ban). */
   private parsedTtl(): number | undefined {
@@ -342,16 +368,23 @@ export class ModerationConsoleComponent implements OnInit {
     this.surfaceBan(result, 'Lift');
   }
 
-  private surfaceBan(result: PendingReconcile | null, verb: string): void {
-    if (result) {
-      this.banNote.set(this.pendingMessage(result, `${verb} accepted`));
+  /**
+   * Render a ban/lift outcome. The failure branch reports WHAT THE SERVER SAID —
+   * status, body, and the step-up header when present. It used to assert
+   * "you cannot ban yourself or a moderator/administrator" for EVERY failure,
+   * which was a false accusation for an expired session, a gateway 5xx, an
+   * offline browser and (once mod-bff's gate is armed) a step-up 403. That
+   * sentence now survives only as the 403 hint, and only when the server itself
+   * gave no reason. See hugmesh-mod-ui#14.
+   */
+  private surfaceBan(result: ModWriteResult<PendingReconcile>, verb: string): void {
+    if (result.ok) {
+      this.banNote.set(this.pendingMessage(result.value, `${verb} accepted`));
       this.banTarget = '';
       this.banTtlSeconds = '';
       this.banReason = '';
     } else {
-      this.banError.set(
-        `The ${verb.toLowerCase()} was rejected — you cannot ban yourself or a moderator/administrator.`,
-      );
+      this.banError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
   }
 
@@ -379,15 +412,15 @@ export class ModerationConsoleComponent implements OnInit {
     this.surfaceDomainLock(result, 'Domain-unlock');
   }
 
-  private surfaceDomainLock(result: PendingReconcile | null, verb: string): void {
-    if (result) {
-      this.domainLockNote.set(this.pendingMessage(result, `${verb} accepted`));
+  /** Same contract as {@link surfaceBan}: report the server's own reason, and
+   *  fall back to the privileged/self-target rule only as a NAMED POSSIBILITY. */
+  private surfaceDomainLock(result: ModWriteResult<PendingReconcile>, verb: string): void {
+    if (result.ok) {
+      this.domainLockNote.set(this.pendingMessage(result.value, `${verb} accepted`));
       this.domainLockUser = '';
       this.domainLockReason = '';
     } else {
-      this.domainLockError.set(
-        `The ${verb.toLowerCase()} was rejected — you cannot domain-lock yourself or a moderator/administrator.`,
-      );
+      this.domainLockError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
   }
 

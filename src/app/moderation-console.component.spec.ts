@@ -2,7 +2,15 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
 import { BehaviorSubject } from 'rxjs';
 import { ModerationConsoleComponent } from './moderation-console.component';
-import { BlockResult, ModAction, ModBffService, ModerationRequest, SystemFinding } from './mod-bff.service';
+import {
+  BlockResult,
+  ModAction,
+  ModBffService,
+  ModerationRequest,
+  PendingReconcile,
+  SystemFinding,
+} from './mod-bff.service';
+import { ModWriteError, ModWriteResult } from './mod-write-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
 
@@ -28,6 +36,36 @@ const action: ModAction = {
   result: 'stubbed',
   ts: '2026-06-06T00:00:00',
 };
+
+/** A successful write, in the shape ModBffService now resolves to. */
+function ok<T>(value: T): ModWriteResult<T> {
+  return { ok: true, value };
+}
+
+/**
+ * A FAILED write carrying real wire facts. The point of #14: these tests can now
+ * distinguish a 403 from a 502 from a dropped connection, exactly as the console
+ * must — the old spec could only say `null`.
+ */
+function failed<T>(
+  status: number,
+  statusText: string,
+  serverMessage: string | null = null,
+  stepUpSignal: string | null = null,
+): ModWriteResult<T> {
+  const body = serverMessage === null ? null : { error: serverMessage };
+  return {
+    ok: false,
+    error: new ModWriteError(
+      serverMessage ?? `Http failure response: ${status} ${statusText}`,
+      status,
+      statusText,
+      body,
+      serverMessage,
+      stepUpSignal,
+    ),
+  };
+}
 
 describe('ModerationConsoleComponent', () => {
   let fixture: ComponentFixture<ModerationConsoleComponent>;
@@ -61,12 +99,12 @@ describe('ModerationConsoleComponent', () => {
     );
     bff.loadModeration.and.resolveTo([request]);
     bff.loadAudit.and.resolveTo([action]);
-    bff.refer.and.resolveTo({ ...request, status: 'referred' });
-    bff.recommend.and.resolveTo(request);
-    bff.ban.and.resolveTo({ state: 'pending-reconcile' });
-    bff.lift.and.resolveTo({ state: 'restored' });
-    bff.domainLock.and.resolveTo({ state: 'pending-reconcile' });
-    bff.domainUnlock.and.resolveTo({ state: 'cleared' });
+    bff.refer.and.resolveTo(ok({ ...request, status: 'referred' }));
+    bff.recommend.and.resolveTo(ok(request));
+    bff.ban.and.resolveTo(ok({ state: 'pending-reconcile' }));
+    bff.lift.and.resolveTo(ok({ state: 'restored' }));
+    bff.domainLock.and.resolveTo(ok({ state: 'pending-reconcile' }));
+    bff.domainUnlock.and.resolveTo(ok({ state: 'cleared' }));
 
     admin = jasmine.createSpyObj<AdminBffService>('AdminBffService', ['decide']);
     admin.decide.and.resolveTo({ ...request, status: 'approved' });
@@ -110,12 +148,13 @@ describe('ModerationConsoleComponent', () => {
     expect(component.referError()).toBe('');
   });
 
-  it('surfaces a rejected refer (null) honestly instead of silently doing nothing', async () => {
-    bff.refer.and.resolveTo(null);
+  it('surfaces a rejected refer honestly, with the status, instead of silently doing nothing', async () => {
+    bff.refer.and.resolveTo(failed(409, 'Conflict', 'request 7 is already referred'));
     fixture.detectChanges();
     await component.refer(7);
     fixture.detectChanges();
-    expect(component.referError()).toContain('NOT escalated');
+    expect(component.referError()).toContain('HTTP 409');
+    expect(component.referError()).toContain('already referred');
     const el: HTMLElement = fixture.nativeElement;
     const err = el.querySelector('[data-testid="mc-refer-error"]')!;
     expect(err).not.toBeNull();
@@ -133,7 +172,7 @@ describe('ModerationConsoleComponent', () => {
   describe('server-wide block', () => {
     it('submits a trimmed block (platform/scope/target/reason) and clears the inputs', async () => {
       const result: BlockResult = { blocked: action, external: 'stubbed', note: 'STUBBED' };
-      bff.block.and.resolveTo(result);
+      bff.block.and.resolveTo(ok(result));
       fixture.detectChanges();
 
       component.platform = 'mastodon';
@@ -151,7 +190,7 @@ describe('ModerationConsoleComponent', () => {
     });
 
     it('omits reason when blank and surfaces the external result note', async () => {
-      bff.block.and.resolveTo({ blocked: action, external: 'stubbed' });
+      bff.block.and.resolveTo(ok({ blocked: action, external: 'stubbed' }));
       fixture.detectChanges();
       component.target = '@x:y';
       component.reason = '   ';
@@ -177,12 +216,12 @@ describe('ModerationConsoleComponent', () => {
       expect(alert.getAttribute('aria-live')).toBe('assertive');
     });
 
-    it('surfaces a server rejection as an error', async () => {
-      bff.block.and.resolveTo(null);
+    it('surfaces a server rejection as an error carrying the status', async () => {
+      bff.block.and.resolveTo(failed(502, 'Bad Gateway'));
       fixture.detectChanges();
       component.target = '@x:y';
       await component.block();
-      expect(component.blockError()).not.toBe('');
+      expect(component.blockError()).toContain('HTTP 502');
     });
   });
 
@@ -220,7 +259,7 @@ describe('ModerationConsoleComponent', () => {
     });
 
     it('announces the block outcome in a polite role=status live region', async () => {
-      bff.block.and.resolveTo({ blocked: action, external: 'stubbed', note: 'STUBBED' });
+      bff.block.and.resolveTo(ok({ blocked: action, external: 'stubbed', note: 'STUBBED' }));
       fixture.detectChanges();
       component.target = '@x:y';
       await component.block();
@@ -422,12 +461,13 @@ describe('ModerationConsoleComponent', () => {
       expect(component.recommendError()).not.toBe('');
     });
 
-    it('surfaces a server rejection', async () => {
-      bff.recommend.and.resolveTo(null);
+    it('surfaces a server rejection with the status and the server\u2019s own message', async () => {
+      bff.recommend.and.resolveTo(failed(400, 'Bad Request', 'kind is not in the closed vocabulary'));
       fixture.detectChanges();
       component.recommendTarget = 'x';
       await component.recommend();
-      expect(component.recommendError()).not.toBe('');
+      expect(component.recommendError()).toContain('HTTP 400');
+      expect(component.recommendError()).toContain('closed vocabulary');
     });
   });
 
@@ -481,16 +521,58 @@ describe('ModerationConsoleComponent', () => {
       expect(component.banError()).not.toBe('');
     });
 
-    it('mirrors the server guard (403) as a "cannot ban a mod/admin/self" error', async () => {
-      bff.ban.and.resolveTo(null);
+    it('reports a bodyless 403 as a refusal and OFFERS the privileged/self rule as a possibility', async () => {
+      bff.ban.and.resolveTo(failed(403, 'Forbidden'));
       fixture.detectChanges();
       component.banTarget = 'an-admin';
       await component.ban();
-      expect(component.banError()).toContain('moderator/administrator');
+      expect(component.banError()).toContain('HTTP 403');
+      expect(component.banError()).toContain('gave no reason');
+      expect(component.banError()).toContain('privileged or self target');
+    });
+
+    it('prefers the server\u2019s OWN reason over the privileged/self guess', async () => {
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', 'ban requires step-up re-authentication'));
+      fixture.detectChanges();
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.banError()).toContain('ban requires step-up re-authentication');
+      expect(component.banError()).not.toContain('gave no reason');
+    });
+
+    it('surfaces the X-Step-Up-Required signal, and says the console cannot step up yet', async () => {
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, 'X-ModBan-StepUp'));
+      fixture.detectChanges();
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.banError()).toContain('X-Step-Up-Required: X-ModBan-StepUp');
+      expect(component.banError()).toContain('cannot complete a step-up yet');
+    });
+
+    // The regression this whole change exists to prevent (#14): a 5xx and a
+    // dropped connection must NEVER be explained as a privileged/self target.
+    it('does NOT accuse the target when the failure was a server error', async () => {
+      bff.ban.and.resolveTo(failed(500, 'Server Error'));
+      fixture.detectChanges();
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.banError()).toContain('HTTP 500');
+      expect(component.banError()).not.toContain('privileged or self target');
+      expect(component.banError()).toContain('check the audit trail');
+    });
+
+    it('reports an UNKNOWN fate (not a rejection) when no response arrived', async () => {
+      bff.ban.and.resolveTo(failed(0, ''));
+      fixture.detectChanges();
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.banError()).toContain('NO response');
+      expect(component.banError()).toContain('may or may not have been applied');
+      expect(component.banError()).not.toContain('privileged or self target');
     });
 
     it('surfaces the degraded note when the admin-bff breaker is open', async () => {
-      bff.ban.and.resolveTo({ state: 'pending-reconcile', degraded: 'breaker-open' });
+      bff.ban.and.resolveTo(ok({ state: 'pending-reconcile', degraded: 'breaker-open' }));
       fixture.detectChanges();
       component.banTarget = 'bad-user';
       await component.ban();
@@ -504,7 +586,7 @@ describe('ModerationConsoleComponent', () => {
       await component.ban();
       expect(component.banNote()).not.toBe('');
       // Then: a rejected ban must surface an error AND drop the stale note.
-      bff.ban.and.resolveTo(null);
+      bff.ban.and.resolveTo(failed(403, 'Forbidden'));
       component.banTarget = 'an-admin';
       await component.ban();
       expect(component.banError()).not.toBe('');
@@ -540,16 +622,100 @@ describe('ModerationConsoleComponent', () => {
       expect(component.domainLockError()).not.toBe('');
     });
 
-    it('mirrors the server guard (403) on a rejected lock', async () => {
-      bff.domainLock.and.resolveTo(null);
+    it('reports a rejected lock with its status, offering the privileged/self rule as a possibility', async () => {
+      bff.domainLock.and.resolveTo(failed(403, 'Forbidden'));
       fixture.detectChanges();
       component.domainLockUser = 'a-mod';
       await component.domainLock();
-      expect(component.domainLockError()).toContain('moderator/administrator');
+      expect(component.domainLockError()).toContain('HTTP 403');
+      expect(component.domainLockError()).toContain('privileged or self target');
+    });
+
+    it('does NOT accuse the target when a domain-lock fails for an expired session', async () => {
+      bff.domainLock.and.resolveTo(failed(401, 'Unauthorized'));
+      fixture.detectChanges();
+      component.domainLockUser = 'bad-user';
+      await component.domainLock();
+      expect(component.domainLockError()).toContain('HTTP 401');
+      expect(component.domainLockError()).toContain('Sign in again');
+      expect(component.domainLockError()).not.toContain('privileged or self target');
     });
   });
 
   // ── DISABLED + helptext (V7: no mod-bff endpoint) ───────────────────
+  /**
+   * The cross-user DENY steps in `e2e/features/steps/moderation-steps.ts`
+   * (`expectDeniedAtDenyStatus`) assert a REGEX against the announced text — and
+   * they can be checked nowhere else: those scenarios are `@cluster`, ship dark,
+   * and neither this host nor CI has Playwright installed. So the regex is
+   * mirrored here and run against the REAL component output.
+   *
+   * <p>The invariant is the one `e2e/features/cross-user/mod-isolation.feature`
+   * documents for itself: the mod-bff "returns 403/404 (fail-closed)", and its own
+   * API-layer scenarios assert `403 or 404` for exactly these targets. An earlier
+   * revision of the step pinned 403 alone, which would have failed the whole
+   * scenario on the 404 branch of the contract.
+   *
+   * <p>If you change the sentence `describeWriteFailure` renders, change BOTH —
+   * this block is the only thing that will tell you.
+   */
+  describe('e2e cross-user DENY step regex (mirrored: nothing else can run it)', () => {
+    const deniedAt = (action: string) =>
+      new RegExp(`the ${action} was (refused|not applied) \u2014 http (403|404)\\b`);
+    const OLD_ACCUSATION = /was rejected \u2014 you cannot/;
+
+    it('matches a 403 and a 404 ban refusal, with and without a server reason', async () => {
+      fixture.detectChanges();
+      for (const result of [
+        failed<PendingReconcile>(403, 'Forbidden'),
+        failed<PendingReconcile>(404, 'Not Found'),
+        failed<PendingReconcile>(403, 'Forbidden', 'target is a moderator'),
+        failed<PendingReconcile>(404, 'Not Found', 'no such user'),
+        // What an HTTP/2 deployment actually delivers: no reason phrase on the
+        // wire, so Angular's XHR backend substitutes 'OK' on the error too.
+        failed<PendingReconcile>(403, 'OK'),
+      ]) {
+        bff.ban.and.resolveTo(result);
+        component.banTarget = 'an-admin';
+        await component.ban();
+        const text = component.banError().toLowerCase();
+        expect(text).withContext(text).toMatch(deniedAt('ban'));
+        expect(text).withContext(text).not.toMatch(OLD_ACCUSATION);
+      }
+    });
+
+    it('matches a 403 and a 404 domain-lock refusal', async () => {
+      fixture.detectChanges();
+      for (const result of [
+        failed<PendingReconcile>(403, 'Forbidden'),
+        failed<PendingReconcile>(404, 'Not Found'),
+        failed<PendingReconcile>(403, 'OK'),
+      ]) {
+        bff.domainLock.and.resolveTo(result);
+        component.domainLockUser = 'a-mod';
+        await component.domainLock();
+        const text = component.domainLockError().toLowerCase();
+        expect(text).withContext(text).toMatch(deniedAt('domain-lock'));
+        expect(text).withContext(text).not.toMatch(OLD_ACCUSATION);
+      }
+    });
+
+    it('renders the alert in the role=alert region the step locates', async () => {
+      bff.ban.and.resolveTo(failed<PendingReconcile>(403, 'Forbidden'));
+      fixture.detectChanges();
+      component.banTarget = 'an-admin';
+      await component.ban();
+      fixture.detectChanges();
+      // The region is @if-gated on banError(), so it only exists once a write
+      // has actually failed — which is the state the e2e step observes.
+      const alert: HTMLElement | null = fixture.nativeElement.querySelector('[data-testid="mc-ban-error"]');
+      expect(alert).withContext('mc-ban-error must be rendered for the e2e locator').not.toBeNull();
+      expect(alert!.getAttribute('role')).toBe('alert');
+      expect(alert!.getAttribute('aria-live')).toBe('assertive');
+      expect((alert!.textContent ?? '').toLowerCase()).toMatch(deniedAt('ban'));
+    });
+  });
+
   describe('admin-only / no-endpoint controls render disabled + helptext', () => {
     function expectDisabledWithHelp(testid: string, helpId: string) {
       fixture.detectChanges();

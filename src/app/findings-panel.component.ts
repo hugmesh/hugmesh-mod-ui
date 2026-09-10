@@ -3,6 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { ModBffService, SystemFinding } from './mod-bff.service';
+import { describeWriteFailure } from './mod-write-error';
 import { accessibleName } from './accessible-name';
 
 /**
@@ -92,12 +93,23 @@ export class FindingsPanelComponent implements OnInit {
     await this.resolve(id, false, 'Finding dismissed (cleared)');
   }
 
+  /**
+   * Resolve one finding and report the outcome honestly. The failure branch used
+   * to assert one reason ("it may already be resolved, or belong to another
+   * domain") for EVERY failure, because {@code resolveFinding} collapsed them all
+   * to {@code null}; that reason is now the 404/403 HINT, offered only when the
+   * server gave none of its own. See hugmesh-mod-ui#14.
+   */
   private async resolve(id: number, actioned: boolean, okMessage: string): Promise<void> {
     const result = await this.bff.resolveFinding(id, actioned);
     this.resolveNote.set(
-      result
+      result.ok
         ? `${okMessage}. The queue has been refreshed.`
-        : 'The resolve was rejected by the server (it may already be resolved, or belong to another domain).',
+        : describeWriteFailure(
+            result.error,
+            `resolve of finding #${id}`,
+            'it may already be resolved, or belong to another domain.',
+          ),
     );
   }
 }

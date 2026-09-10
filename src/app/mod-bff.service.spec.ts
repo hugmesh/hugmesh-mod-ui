@@ -4,6 +4,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { firstValueFrom } from 'rxjs';
 import { BlockResult, ModAction, ModBffService, ModerationRequest, SystemFinding } from './mod-bff.service';
+import { ModWriteError, ModWriteResult } from './mod-write-error';
 import { authInterceptor } from './auth.interceptor';
 import { SessionService, SnapSession } from './session.service';
 
@@ -87,6 +88,20 @@ describe('ModBffService', () => {
 
   afterEach(() => httpMock.verify());
 
+  /** Unwrap a write that must have succeeded (fails loudly, with the status, if not). */
+  function value<T>(result: ModWriteResult<T>): T {
+    if (!result.ok) {
+      throw new Error(`expected ok, got HTTP ${result.error.status}: ${result.error.message}`);
+    }
+    return result.value;
+  }
+
+  /** Unwrap a write that must have FAILED, for asserting on the carried wire facts. */
+  function failure<T>(result: ModWriteResult<T>): ModWriteError {
+    if (result.ok) throw new Error('expected a failure, got ok');
+    return result.error;
+  }
+
   function sendsCookie(req: { request: { withCredentials: boolean; headers: { has(n: string): boolean } } }): boolean {
     // The cookie path: credentials are forwarded and the browser holds NO bearer.
     return req.request.withCredentials && !req.request.headers.has('Authorization');
@@ -158,8 +173,8 @@ describe('ModBffService', () => {
     post.flush({ request: { ...sampleRequest, status: 'referred' } });
     // second call refreshes the queue
     await flushNext('/bff/mod/moderation', { requests: [{ ...sampleRequest, status: 'referred' }] });
-    const referred = await p;
-    expect(referred!.status).toBe('referred');
+    const referred = value(await p);
+    expect(referred.status).toBe('referred');
     expect((await firstValueFrom(service.moderation))[0].status).toBe('referred');
   });
 
@@ -177,15 +192,17 @@ describe('ModBffService', () => {
     });
     post.flush(blockResult);
     await flushNext('/bff/mod/audit', { actions: [sampleAction] });
-    const result = await p;
-    expect(result!.external).toBe('stubbed');
+    const result = value(await p);
+    expect(result.external).toBe('stubbed');
     expect(await firstValueFrom(service.audit)).toEqual([sampleAction]);
   });
 
-  it('returns null (and does not refresh audit) when the block POST fails', async () => {
+  it('carries the status out (and does not refresh audit) when the block POST fails', async () => {
     const p = service.block({ platform: 'matrix', scope: 'user', target: 'x' });
     httpMock.expectOne('/bff/mod/block').flush(null, { status: 400, statusText: 'Bad Request' });
-    expect(await p).toBeNull();
+    const error = failure(await p);
+    expect(error.status).toBe(400);
+    expect(error.statusText).toBe('Bad Request');
     httpMock.verify(); // no follow-up audit refresh outstanding
   });
 
@@ -198,14 +215,19 @@ describe('ModBffService', () => {
     expect(post.request.body).toEqual({ kind: 'instance-block', target: 'evil.example', reason: 'spam' });
     post.flush({ request: sampleRequest });
     await flushNext('/bff/mod/moderation', { requests: [sampleRequest] }); // queue refresh
-    expect(await p).toEqual(sampleRequest);
+    expect(value(await p)).toEqual(sampleRequest);
   });
 
-  it('returns null when the recommend POST fails', async () => {
+  it('carries the status + server message out when the recommend POST fails', async () => {
     const p = service.recommend({ kind: 'user-removal', target: 'x' });
-    httpMock.expectOne('/bff/mod/moderation').flush(null, { status: 400, statusText: 'Bad Request' });
+    httpMock
+      .expectOne('/bff/mod/moderation')
+      .flush({ error: 'kind is not in the closed vocabulary' }, { status: 400, statusText: 'Bad Request' });
     await flushNext('/bff/mod/moderation', { requests: [] }); // queue refresh still runs
-    expect(await p).toBeNull();
+    const error = failure(await p);
+    expect(error.status).toBe(400);
+    expect(error.serverMessage).toBe('kind is not in the closed vocabulary');
+    expect(error.body).toEqual({ error: 'kind is not in the closed vocabulary' });
   });
 
   // ── Ban / lift (POST/DELETE /bff/mod/ban) ──────────────────────────
@@ -218,15 +240,41 @@ describe('ModBffService', () => {
     });
     post.flush({ state: 'pending-reconcile', propagation: 'queued' });
     await flushNext('/bff/mod/audit', { actions: [sampleAction] }); // audit refresh
-    const result = await p;
-    expect(result!.state).toBe('pending-reconcile');
+    const result = value(await p);
+    expect(result.state).toBe('pending-reconcile');
   });
 
-  it('returns null when the ban POST is rejected (e.g. a 403 banning a privileged/self target)', async () => {
+  it('carries the 403 out when the ban POST is rejected (privileged/self target)', async () => {
     const p = service.ban({ platform: 'profile', target: 'an-admin' });
     httpMock.expectOne('/bff/mod/ban').flush(null, { status: 403, statusText: 'Forbidden' });
-    expect(await p).toBeNull();
+    const error = failure(await p);
+    expect(error.status).toBe(403);
+    expect(error.stepUpSignal).toBeNull();
     httpMock.verify(); // no audit refresh on failure
+  });
+
+  it('carries the X-Step-Up-Required header out of a gated ban 403', async () => {
+    // mod-bff's ModStepUpGate denies with a bare 403 TODAY. This asserts the seam
+    // the MFA port (#1) needs: whenever it starts signalling, the signal survives
+    // instead of being collapsed to null. See #14.
+    const p = service.ban({ platform: 'matrix', target: '@bad:evil.example' });
+    httpMock.expectOne('/bff/mod/ban').flush(
+      { error: 'ban requires step-up re-authentication' },
+      { status: 403, statusText: 'Forbidden', headers: { 'X-Step-Up-Required': 'X-ModBan-StepUp' } },
+    );
+    const error = failure(await p);
+    expect(error.status).toBe(403);
+    expect(error.stepUpSignal).toBe('X-ModBan-StepUp');
+    expect(error.serverMessage).toBe('ban requires step-up re-authentication');
+  });
+
+  it('reports status 0 (fate UNKNOWN), not a rejection, when no response arrives', async () => {
+    const p = service.ban({ platform: 'matrix', target: '@bad:evil.example' });
+    httpMock.expectOne('/bff/mod/ban').error(new ProgressEvent('network error'));
+    const error = failure(await p);
+    expect(error.status).toBe(0);
+    expect(error.noResponse).toBeTrue();
+    httpMock.verify(); // no audit refresh
   });
 
   it('DELETEs a ban (lift) with the same body shape', async () => {
@@ -236,7 +284,7 @@ describe('ModBffService', () => {
     expect(del.request.body).toEqual({ platform: 'mastodon', target: 'acct@evil.example' });
     del.flush({ state: 'restored' });
     await flushNext('/bff/mod/audit', { actions: [] });
-    expect((await p)!.state).toBe('restored');
+    expect(value(await p).state).toBe('restored');
   });
 
   // ── Domain-lock / unlock (POST/DELETE /bff/mod/domain-lock/{role}/{user}) ──
@@ -249,7 +297,7 @@ describe('ModBffService', () => {
     expect(post.request.body).toEqual({ reason: 'evasion' });
     post.flush({ state: 'pending-reconcile' });
     await flushNext('/bff/mod/audit', { actions: [] });
-    expect((await p)!.state).toBe('pending-reconcile');
+    expect(value(await p).state).toBe('pending-reconcile');
   });
 
   it('omits the body on a body-less domain-unlock', async () => {
@@ -259,15 +307,16 @@ describe('ModBffService', () => {
     expect(del.request.body).toBeNull();
     del.flush({ state: 'cleared' });
     await flushNext('/bff/mod/audit', { actions: [] });
-    expect((await p)!.state).toBe('cleared');
+    expect(value(await p).state).toBe('cleared');
   });
 
-  it('returns null when the domain-lock POST is rejected', async () => {
+  it('carries the 403 out when the domain-lock POST is rejected', async () => {
     const p = service.domainLock('ROLE_MATRIX_DOMAINLOCKED', 'a-mod');
     httpMock
       .expectOne('/bff/mod/domain-lock/ROLE_MATRIX_DOMAINLOCKED/a-mod')
       .flush(null, { status: 403, statusText: 'Forbidden' });
-    expect(await p).toBeNull();
+    const error = failure(await p);
+    expect(error.status).toBe(403);
     httpMock.verify(); // no audit refresh on failure
   });
 
@@ -332,8 +381,8 @@ describe('ModBffService', () => {
     post.flush({ finding: { ...sampleFinding, status: 'actioned', reviewer: 'mod:bob' } });
     // second call refreshes the queue
     await flushNext('/bff/mod/findings', { findings: [{ ...sampleFinding, status: 'actioned' }] });
-    const resolved = await p;
-    expect(resolved!.status).toBe('actioned');
+    const resolved = value(await p);
+    expect(resolved.status).toBe('actioned');
     expect((await firstValueFrom(service.findings))[0].status).toBe('actioned');
   });
 
@@ -344,16 +393,28 @@ describe('ModBffService', () => {
     expect(post.request.params.get('actioned')).toBe('false');
     post.flush({ finding: { ...sampleFinding, status: 'dismissed' } });
     await flushNext('/bff/mod/findings', { findings: [] });
-    expect((await p)!.status).toBe('dismissed');
+    expect(value(await p).status).toBe('dismissed');
   });
 
-  it('returns null (still refreshing the queue) when the resolve POST is rejected', async () => {
+  it('carries the 404 out (still refreshing the queue) when the resolve POST is rejected', async () => {
     const p = service.resolveFinding(99, true);
     httpMock
       .expectOne((r) => r.url === '/bff/mod/findings/99/resolve')
       .flush(null, { status: 404, statusText: 'Not Found' });
-    // The queue refresh still runs (the catch resolves to null, then loadFindings fires).
+    // The queue refresh still runs (the failure is returned, not thrown, then loadFindings fires).
     await flushNext('/bff/mod/findings', { findings: [] });
-    expect(await p).toBeNull();
+    const error = failure(await p);
+    expect(error.status).toBe(404);
+    expect(error.statusText).toBe('Not Found');
+  });
+
+  // ── The 2xx-with-no-entity case, which is NOT a refusal ────────────
+  it('reports a 200 whose envelope carried no { request } as its real status, not as a refusal', async () => {
+    const p = service.refer(7);
+    httpMock.expectOne('/bff/mod/moderation/7/refer').flush({});
+    await flushNext('/bff/mod/moderation', { requests: [] });
+    const error = failure(await p);
+    expect(error.status).toBe(200);
+    expect(error.message).toContain('carried no referred request');
   });
 });

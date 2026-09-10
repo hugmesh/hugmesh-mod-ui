@@ -192,8 +192,9 @@
   <form (ngSubmit)="ban()" aria-labelledby="mc-ban-heading" aria-describedby="mc-ban-intro" novalidate>
     <p class="intro" id="mc-ban-intro">
       Ban a user from a platform-access role. You cannot ban yourself or a
-      moderator/administrator (the server enforces this; a rejected attempt is
-      announced below). The effect is applied asynchronously by the reconcile loop.
+      moderator/administrator (the server enforces this; a refusal is announced
+      below with the status and whatever reason the server gave). The effect is
+      applied asynchronously by the reconcile loop.
     </p>
 
     <label for="mc-ban-platform">Platform</label>

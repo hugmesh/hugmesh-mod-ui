@@ -1,6 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
 import { ModeratorService } from './api/services/moderator.service';
+import { StrictHttpResponse } from './api/strict-http-response';
+import { ModWriteError, ModWriteResult, writeFailed, writeOk } from './mod-write-error';
 
 /**
  * Talks to the Spring Moderator BFF (hugmesh-mod-bff-api, behind the gateway),
@@ -27,9 +29,30 @@ import { ModeratorService } from './api/services/moderator.service';
  * (moderation-console) need no change; the generated, weakly-typed
  * {@code Map<String,Object>} response bodies are bridged at the delegation
  * boundary (the BFF returns untyped envelopes, so the generated models are
- * {@code {[k:string]: {}}}). The historic contract is preserved exactly:
- * reads that fail resolve to {@code []}, writes that fail resolve to
- * {@code null} (never throw), and successful writes refresh the relevant cache.
+ * {@code {[k:string]: {}}}).
+ *
+ * <h3>The failure contract (changed — see hugmesh-mod-ui#14)</h3>
+ * READS are unchanged and still fail soft: a non-2xx resolves to {@code []}.
+ *
+ * <p>WRITES no longer resolve to {@code null}. Every write returns a
+ * {@link ModWriteResult}: {@code {ok:true, value}} on success, or
+ * {@code {ok:false, error}} carrying a {@link ModWriteError} with the HTTP
+ * status, the response body and the {@code X-Step-Up-Required} header. They
+ * still never THROW — the discriminated union is what the caller branches on.
+ *
+ * <p>Why it changed: the previous {@code .catch(() => null)} on all seven write
+ * paths made a step-up 403, an expired session, a gateway 502 and an offline
+ * browser indistinguishable, and the console printed one guessed reason for all
+ * of them ("you cannot ban yourself or a moderator/administrator"). It also made
+ * hugmesh-mod-ui#1 (the admin-ui MFA step-up dialog port) unbuildable: admin-ui
+ * detects a step-up denial from the response header or the {@code {error}} body,
+ * and neither survives a collapse to {@code null}.
+ *
+ * <p>The writes call the generated {@code *$Response} variants rather than the
+ * body-only ones precisely so the STATUS is known on both paths — including the
+ * "2xx with an envelope that carried no entity" case, which is reported as its
+ * own failure ({@link ModWriteError#malformed}) rather than being confused with
+ * a refusal.
  */
 @Injectable({ providedIn: 'root' })
 export class ModBffService {
@@ -52,6 +75,36 @@ export class ModBffService {
     return (body ?? {}) as Record<string, unknown>;
   }
 
+  /**
+   * The one write seam: await a generated {@code *$Response} call, and turn it
+   * into a {@link ModWriteResult} without ever throwing.
+   *
+   *  - transport/HTTP failure -> {@link ModWriteError#from} (status, body and
+   *    the {@code X-Step-Up-Required} header preserved; status {@code 0} when no
+   *    response reached the browser at all);
+   *  - 2xx whose envelope did not carry {@code expected} -> {@link
+   *    ModWriteError#malformed}, which reports the REAL status, so "accepted but
+   *    returned nothing" is never rendered as "refused";
+   *  - otherwise ok.
+   */
+  private static async write<B, T>(
+    call: Promise<StrictHttpResponse<B>>,
+    extract: (body: B, res: StrictHttpResponse<B>) => T | null | undefined,
+    expected: string,
+  ): Promise<ModWriteResult<T>> {
+    let res: StrictHttpResponse<B>;
+    try {
+      res = await call;
+    } catch (e) {
+      return writeFailed<T>(ModWriteError.from(e));
+    }
+    const value = extract(res.body, res);
+    if (value === null || value === undefined) {
+      return writeFailed<T>(ModWriteError.malformed(res.status, res.statusText, res.body, expected));
+    }
+    return writeOk(value);
+  }
+
   // ── Moderation triage (federation-api queue) ───────────────────────
   /** GET /bff/mod/moderation — load the queue and push it onto the subject. */
   async loadModeration(status?: string): Promise<ModerationRequest[]> {
@@ -65,14 +118,18 @@ export class ModBffService {
   /**
    * POST /bff/mod/moderation/{id}/refer — refer/escalate a request UP to an
    * admin (the ONLY mod escalation path; a mod never removes directly). Refreshes
-   * the cached queue so the referred row reflects its new status.
+   * the cached queue so the referred row reflects its new status. A non-2xx (or a
+   * 2xx envelope with no {@code request}) returns {@code {ok:false, error}} with
+   * the status + body, so the console can say WHY instead of guessing.
    */
-  async refer(id: number): Promise<ModerationRequest | null> {
-    const referred = await this.api.referModeration({ id })
-      .then((b) => (ModBffService.env(b)['request'] as ModerationRequest) ?? null)
-      .catch(() => null as ModerationRequest | null);
+  async refer(id: number): Promise<ModWriteResult<ModerationRequest>> {
+    const result = await ModBffService.write(
+      this.api.referModeration$Response({ id }),
+      (b) => ModBffService.env(b)['request'] as ModerationRequest | undefined,
+      'referred request',
+    );
     await this.loadModeration();
-    return referred;
+    return result;
   }
 
   /**
@@ -80,12 +137,14 @@ export class ModBffService {
    * federation queue (the user→mod→admin chain's middle step). Refreshes the
    * cached queue so the new row appears.
    */
-  async recommend(req: RecommendRequest): Promise<ModerationRequest | null> {
-    const recommended = await this.api.recommendModeration({ body: req })
-      .then((b) => (ModBffService.env(b)['request'] as ModerationRequest) ?? null)
-      .catch(() => null as ModerationRequest | null);
+  async recommend(req: RecommendRequest): Promise<ModWriteResult<ModerationRequest>> {
+    const result = await ModBffService.write(
+      this.api.recommendModeration$Response({ body: req }),
+      (b) => ModBffService.env(b)['request'] as ModerationRequest | undefined,
+      'recorded request',
+    );
     await this.loadModeration();
-    return recommended;
+    return result;
   }
 
   // ── Server-wide block (external homeserver admin + local audit) ────
@@ -96,11 +155,13 @@ export class ModBffService {
    * dark by default. Either way the action is always recorded in the audit
    * table; the audit cache is refreshed on success.
    */
-  async block(req: BlockRequest): Promise<BlockResult | null> {
-    const result = await this.api.blockServerWide({ body: req })
-      .then((b) => b as unknown as BlockResult)
-      .catch(() => null as BlockResult | null);
-    if (result === null) return null;
+  async block(req: BlockRequest): Promise<ModWriteResult<BlockResult>> {
+    const result = await ModBffService.write(
+      this.api.blockServerWide$Response({ body: req }),
+      (b) => b as unknown as BlockResult | null,
+      'block result',
+    );
+    if (!result.ok) return result;
     await this.loadAudit();
     return result;
   }
@@ -110,15 +171,19 @@ export class ModBffService {
    * POST /bff/mod/ban — ban a user from a platform-access role. Returns the
    * 202 {state:'pending-reconcile', ...} envelope (NOT a synchronous "banned":
    * the effect is asynchronous). `ttlSeconds` absent/null = a PERMANENT ban.
-   * Refreshes the audit cache so the recorded action appears. Returns null on a
-   * non-2xx (e.g. the 403 a MOD gets banning a privileged/self target — which the
-   * UI already mirrors by disabling those targets).
+   * Refreshes the audit cache so the recorded action appears (on success only).
+   * A non-2xx returns {@code {ok:false, error}} carrying the status and body —
+   * a 403 here may be the privileged/self-target rule the UI already mirrors by
+   * disabling those targets, OR the mod-bff step-up gate, and the caller must be
+   * able to tell them apart rather than guess.
    */
-  async ban(req: BanRequest): Promise<PendingReconcile | null> {
-    const result = await this.api.banUser({ body: req })
-      .then((b) => b as unknown as PendingReconcile)
-      .catch(() => null as PendingReconcile | null);
-    if (result === null) return null;
+  async ban(req: BanRequest): Promise<ModWriteResult<PendingReconcile>> {
+    const result = await ModBffService.write(
+      this.api.banUser$Response({ body: req }),
+      (b) => b as unknown as PendingReconcile | null,
+      'pending-reconcile envelope',
+    );
+    if (!result.ok) return result;
     await this.loadAudit();
     return result;
   }
@@ -127,11 +192,13 @@ export class ModBffService {
    * DELETE /bff/mod/ban — lift a previously written ban (same BanRequest body;
    * ttlSeconds/reason ignored). Same 202 pending-reconcile contract.
    */
-  async lift(req: BanRequest): Promise<PendingReconcile | null> {
-    const result = await this.api.liftBan({ body: req })
-      .then((b) => b as unknown as PendingReconcile)
-      .catch(() => null as PendingReconcile | null);
-    if (result === null) return null;
+  async lift(req: BanRequest): Promise<ModWriteResult<PendingReconcile>> {
+    const result = await ModBffService.write(
+      this.api.liftBan$Response({ body: req }),
+      (b) => b as unknown as PendingReconcile | null,
+      'pending-reconcile envelope',
+    );
+    if (!result.ok) return result;
     await this.loadAudit();
     return result;
   }
@@ -143,7 +210,11 @@ export class ModBffService {
    * travel as PATH variables; the optional {reason?, idempotencyKey?} body is
    * sent only when present. Same 202 pending-reconcile contract.
    */
-  async domainLock(role: DomainLockRole, user: string, body?: DomainLockBody): Promise<PendingReconcile | null> {
+  async domainLock(
+    role: DomainLockRole,
+    user: string,
+    body?: DomainLockBody,
+  ): Promise<ModWriteResult<PendingReconcile>> {
     return this.domainLockCall('POST', role, user, body);
   }
 
@@ -151,7 +222,11 @@ export class ModBffService {
    * DELETE /bff/mod/domain-lock/{role}/{user} — clear the local-only marker.
    * Same path-variable shape + 202 pending-reconcile contract (reason ignored).
    */
-  async domainUnlock(role: DomainLockRole, user: string, body?: DomainLockBody): Promise<PendingReconcile | null> {
+  async domainUnlock(
+    role: DomainLockRole,
+    user: string,
+    body?: DomainLockBody,
+  ): Promise<ModWriteResult<PendingReconcile>> {
     return this.domainLockCall('DELETE', role, user, body);
   }
 
@@ -160,15 +235,19 @@ export class ModBffService {
     role: DomainLockRole,
     user: string,
     body?: DomainLockBody,
-  ): Promise<PendingReconcile | null> {
+  ): Promise<ModWriteResult<PendingReconcile>> {
     const hasBody = !!(body && (body.reason || body.idempotencyKey));
     const params = { role, user, body: hasBody ? body : undefined };
     const call =
-      method === 'POST' ? this.api.domainLockUser(params) : this.api.domainUnlockUser(params);
-    const result = await call
-      .then((b) => b as unknown as PendingReconcile)
-      .catch(() => null as PendingReconcile | null);
-    if (result === null) return null;
+      method === 'POST'
+        ? this.api.domainLockUser$Response(params)
+        : this.api.domainUnlockUser$Response(params);
+    const result = await ModBffService.write(
+      call,
+      (b) => b as unknown as PendingReconcile | null,
+      'pending-reconcile envelope',
+    );
+    if (!result.ok) return result;
     await this.loadAudit();
     return result;
   }
@@ -204,17 +283,20 @@ export class ModBffService {
    * POST /bff/mod/findings/{id}/resolve?actioned=<bool> — resolve a HELD finding:
    * `actioned=true` marks it ACTIONED (the mod confirmed it bad / took action),
    * `false` DISMISSES it (the mod cleared it). The reviewer is recorded server-side
-   * from the forwarded JWT subject; a cross-domain id is 404'd server-side. On
-   * success refreshes the cached queue (optimistic refresh) so the resolved row
-   * reflects its new status. Returns the resolved finding, or null on a non-2xx
-   * (never throws), mirroring the refer/recommend contract.
+   * from the forwarded JWT subject; a cross-domain id is 404'd server-side.
+   * Always refreshes the cached queue so the resolved row reflects its new
+   * status. Returns {@code {ok:true, value}} with the resolved finding, or
+   * {@code {ok:false, error}} carrying the status + body on a non-2xx (never
+   * throws), mirroring the refer/recommend contract.
    */
-  async resolveFinding(id: number, actioned: boolean): Promise<SystemFinding | null> {
-    const resolved = await this.api.resolveFinding({ id, actioned })
-      .then((b) => (ModBffService.env(b)['finding'] as SystemFinding) ?? null)
-      .catch(() => null as SystemFinding | null);
+  async resolveFinding(id: number, actioned: boolean): Promise<ModWriteResult<SystemFinding>> {
+    const result = await ModBffService.write(
+      this.api.resolveFinding$Response({ id, actioned }),
+      (b) => ModBffService.env(b)['finding'] as SystemFinding | undefined,
+      'resolved finding',
+    );
     await this.loadFindings();
-    return resolved;
+    return result;
   }
 }
 
