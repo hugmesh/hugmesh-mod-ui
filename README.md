@@ -189,6 +189,33 @@ source of truth, and a mutation refreshes the cache). The HTTP transport is the 
 `authInterceptor` wired in `bootstrap.ts` (`withCredentials: true`) — the browser itself never
 holds a bearer token.
 
+### How a failed write is reported
+
+Reads fail soft: a non-2xx `loadModeration` / `loadAudit` / `loadFindings` resolves to `[]`.
+
+Writes do not. Every write (`refer`, `recommend`, `block`, `ban`, `lift`, `domainLock`,
+`domainUnlock`, `resolveFinding`) resolves to a **`ModWriteResult`** — `{ok: true, value}` or
+`{ok: false, error}` — and never throws. The `error` is a `ModWriteError`
+(`src/app/mod-write-error.ts`) carrying:
+
+| field | what it is |
+| --- | --- |
+| `status` | the HTTP status, or **`0`** when no response reached the browser at all |
+| `statusText` | the reason phrase, when there was one |
+| `body` | the response body as delivered (parsed object, or raw text) |
+| `serverMessage` | the sentence dug out of that body, or `null` |
+| `stepUpSignal` | the `X-Step-Up-Required` header value, when present |
+
+`describeWriteFailure()` turns one into the sentence the console announces, under a single rule:
+**never assert a reason the client cannot know.** A 403 with no body is announced as a refusal at
+that status with the privileged/self-target rule offered as a *possibility*; a 5xx or a status-0
+drop says the write may or may not have applied and points at the audit trail.
+
+This replaced a `.catch(() => null)` on all seven write paths, which made a step-up 403, an
+expired session, a gateway 502 and an offline browser indistinguishable — the console announced
+all of them as *"you cannot ban yourself or a moderator/administrator"*. It is also the
+prerequisite for the MFA step-up port (see Roadmap, and #14 / #1).
+
 ### Moderation action lifecycle
 
 Two distinct write patterns live in this console. The escalation chain (recommend → refer →
@@ -409,9 +436,13 @@ checkout to use `make pentest-dast` locally.
   INERT, so it has deliberately not been done. **Unblock it in mod-bff first** (e.g. lift the
   step-up conjunct out of `@PreAuthorize` into an explicit check throwing
   `ApiException.forbidden("… requires step-up …")`, which the existing legacy-phrase leg already
-  matches); the UI port is small once a denial is distinguishable. Note the current cost: because
-  `ModBffService` collapses every write failure to `null`, an armed deployment reports a step-up
-  denial as *"you cannot ban yourself or a moderator/administrator"*.
+  matches); the UI port is small once a denial is distinguishable.
+  **The UI-side prerequisite is now done** (#14): `ModBffService` no longer collapses write
+  failures to `null` — every write resolves to a `ModWriteResult` carrying the HTTP status, the
+  response body and the `X-Step-Up-Required` header, and the console reports what the server
+  actually said instead of announcing every failure as *"you cannot ban yourself or a
+  moderator/administrator"*. So whenever mod-bff starts signalling a step-up, by either the header
+  or the phrase, the signal reaches UI code; mod-bff is the only remaining blocker.
 - 🔭 **Server-wide block, real backend for Mastodon** — the Mastodon (akkoma) leg is already wired
   to confirmed `pleroma-admin` verbs but ships dark by default behind
   `external.mastodon.enabled`; flipping it on in a given deployment is an operations task, not a UI

@@ -21,7 +21,7 @@
 // remote (no BFF needed) — those features carry @cluster only because the host
 // shell must serve the remote; bddgen compiles them regardless.
 
-import { Page, expect } from '@playwright/test';
+import { Locator, Page, expect } from '@playwright/test';
 import { When, Then } from '../support/fixtures';
 import { banRequestState, pageRegistry } from './_registry';
 
@@ -261,27 +261,37 @@ Then('{string} sees the block recorded note', async ({ user }, username: string)
 
 // ── CROSS-USER DENY (mod-over-privileged / self / cross-tenant) ──────────────
 // The server 403s a mod banning/locking a privileged or self target; the BFF
-// service returns null and the component sets the *-error signal, which renders
-// in a role=alert / aria-live=assertive region. We assert that announced
-// rejection text appears (the user-facing half of the defence-in-depth).
+// service returns {ok:false, error} carrying that status and the component sets
+// the *-error signal, which renders in a role=alert / aria-live=assertive
+// region. We assert that announced refusal appears (the user-facing half of the
+// defence-in-depth).
+//
+// What is asserted is the INVARIANT, not one sentence: a refusal announced AT
+// HTTP 403. Since hugmesh-mod-ui#14 the console prints the server's OWN reason
+// when mod-bff supplies one and only falls back to the privileged/self-target
+// possibility when it does not — so pinning the old fixed accusation string here
+// would fail the moment the API starts explaining itself, which is a change we
+// want, not a regression.
+
+/** The refusal invariant both cross-user DENY steps assert. */
+async function expectRefusedAt403(err: Locator): Promise<void> {
+  await expect(err).toBeVisible();
+  await expect(err).toHaveAttribute('role', 'alert');
+  const text = (await err.textContent())?.toLowerCase() ?? '';
+  expect(text).toContain('refused');
+  expect(text).toContain('http 403');
+}
 
 Then('{string} sees the ban rejected alert', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
   const err = page.locator('[data-testid="mc-ban-error"]');
-  await expect(err).toBeVisible();
-  await expect(err).toHaveAttribute('role', 'alert');
   await expect(err).toHaveAttribute('aria-live', 'assertive');
-  const text = (await err.textContent())?.toLowerCase() ?? '';
-  expect(text).toContain('cannot ban yourself or a moderator/administrator');
+  await expectRefusedAt403(err);
 });
 
 Then('{string} sees the domain-lock rejected alert', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
-  const err = page.locator('[data-testid="mc-dl-error"]');
-  await expect(err).toBeVisible();
-  await expect(err).toHaveAttribute('role', 'alert');
-  const text = (await err.textContent())?.toLowerCase() ?? '';
-  expect(text).toContain('cannot domain-lock yourself or a moderator/administrator');
+  await expectRefusedAt403(page.locator('[data-testid="mc-dl-error"]'));
 });
 
 // ── Required-field validation (USER-SITUATIONAL, runs offline) ──────────────
