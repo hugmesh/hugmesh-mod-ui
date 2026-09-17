@@ -352,9 +352,18 @@ export function describeWriteFailure(error: ModWriteError, action: string, hint?
   // 401, or with 428 Precondition Required (the conventional step-up status), and
   // announcing "sign in again" while dropping the signal would be the same class
   // of wrong answer this whole change exists to remove.
+  //
+  // The clause deliberately makes NO claim about whether the caller can satisfy
+  // the step-up. It used to end "this console cannot complete a step-up yet, so
+  // the action cannot be retried here", which stopped being true for the three
+  // gated forms when hugmesh-mod-ui#1 wired <hug-mfa-step-up-dialog> in front of
+  // them — and this function is shared with refer / recommend / resolve-finding,
+  // which have no dialog. Only the CALLER knows, so only the caller says. In
+  // practice the gated writes never reach this sentence at all: the console
+  // intercepts a recognised step-up refusal and opens the dialog instead (see
+  // mfa/step-up-error.ts for which statuses are recognised, and why 401 is not).
   const stepUp = error.stepUpSignal
-    ? ` The server signalled that a fresh MFA step-up is required (${STEP_UP_SIGNAL_HEADER}: ${error.stepUpSignal});` +
-      ' this console cannot complete a step-up yet, so the action cannot be retried here.'
+    ? ` The server signalled that a fresh MFA step-up is required (${STEP_UP_SIGNAL_HEADER}: ${error.stepUpSignal}).`
     : '';
   const at = `HTTP ${error.status}${reason ? ` ${reason}` : ''}`;
 

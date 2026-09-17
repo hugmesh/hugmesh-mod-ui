@@ -12,7 +12,9 @@ import {
   PendingReconcile,
   RecommendRequest,
 } from './mod-bff.service';
-import { ModWriteResult, describeWriteFailure } from './mod-write-error';
+import { ModWriteError, ModWriteResult, describeWriteFailure } from './mod-write-error';
+import { MfaStepUpDialogComponent } from './mfa/mfa-step-up-dialog.component';
+import { isStepUpRequiredError } from './mfa/step-up-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
 import { accessibleName } from './accessible-name';
@@ -28,6 +30,29 @@ import { TargetTypeaheadComponent } from './target-typeahead.component';
 const FORBIDDEN_HINT =
   'it is usually a privileged or self target (which this console already disables where it ' +
   'can), but the mod-bff step-up (MFA) gate refuses with a bare 403 too.';
+
+/**
+ * A sensitive write that was refused for a fresh MFA step-up, held so the SAME
+ * call can be re-issued verbatim once the challenge succeeds.
+ *
+ * <p>{@link retry} closes over a SNAPSHOT of the request, not over the live form
+ * fields. That is the whole reason this type exists: the challenge dialog stays
+ * open for as long as the moderator needs to find their authenticator, and a
+ * retry that re-read the form could ban a different target than the one the
+ * moderator reviewed and submitted. hugmesh-superadmin-service-catalog-ui#11
+ * made the same call ("retry the same snapshot").
+ */
+interface PendingStepUp {
+  /** Which form is stalled — the console renders the dialog under that form only.
+   *  Exactly ONE of these exists at a time: {@code offerStepUp} refuses to replace
+   *  a live one, because replacing it would discard the stalled write's retry with
+   *  nothing on screen saying so. */
+  readonly form: 'ban' | 'domainLock' | 'block';
+  /** The action, lower-case, as it reads mid-sentence ("ban", "domain-lock"). */
+  readonly action: string;
+  /** Re-issue the identical write. */
+  readonly retry: () => Promise<void>;
+}
 
 /**
  * Moderation console (ROLE_MOD / ROLE_ADMIN only, route-guarded). The single
@@ -86,7 +111,7 @@ const FORBIDDEN_HINT =
 @Component({
   selector: 'hug-moderation-console',
   standalone: true,
-  imports: [CommonModule, FormsModule, TargetTypeaheadComponent],
+  imports: [CommonModule, FormsModule, TargetTypeaheadComponent, MfaStepUpDialogComponent],
   templateUrl: './moderation-console.component.html',
   styleUrl: './moderation-console.component.scss',
 })
@@ -116,6 +141,20 @@ export class ModerationConsoleComponent implements OnInit {
   /** Surfaced honestly when a refer fails — every other write in this console
    *  announces its failure, so refer must not be silent. */
   readonly referError = signal('');
+
+  /**
+   * The sensitive write currently stalled on an MFA step-up, or null. Non-null
+   * renders {@code <hug-mfa-step-up-dialog>} under that form and holds the exact
+   * call to re-issue afterwards.
+   *
+   * <p>INERT AS LANDED: nothing can set this today. hugmesh-mod-bff-api's
+   * {@code ModStepUpGate} denies with a bare Spring 403 that carries neither the
+   * {@code X-Step-Up-Required} header nor the "requires step-up" phrase, so
+   * {@code isStepUpRequiredError} never returns true — and the gate ships dark
+   * besides. The measurement, and the one cross-repo change that unblocks it, are
+   * written up in {@code mfa/step-up-error.ts}. See hugmesh-mod-ui#1.
+   */
+  readonly pendingStepUp = signal<PendingStepUp | null>(null);
 
   // ── Queue status filter ────────────────────────────────────────────
   /** The closed federation status vocab + a self-silence-appeal convenience. */
@@ -281,53 +320,61 @@ export class ModerationConsoleComponent implements OnInit {
       return;
     }
     this.blockError.set('');
-    const result = await this.bff.block({
+    await this.submitBlock({
       platform: this.platform,
       scope: this.scope,
       target: this.target.trim(),
       reason: this.reason.trim() || undefined,
     });
+  }
+
+  /** Issue — or RE-issue after a step-up — one block against an unchanging
+   *  snapshot of the form. See {@link PendingStepUp} for why the snapshot and not
+   *  the live fields. */
+  private async submitBlock(req: BlockRequest): Promise<void> {
+    const result = await this.bff.block(req);
     if (result.ok) {
       this.blockNote.set(result.value.note ?? `Recorded. External result: ${result.value.external}.`);
       this.target = '';
       this.reason = '';
+    } else if (this.offerStepUp(result.error, 'block', 'block', () => this.submitBlock(req))) {
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.blockError.set(describeWriteFailure(result.error, 'block', FORBIDDEN_HINT));
     }
   }
 
-  // TODO: ban/lift, domainLock/domainUnlock and block below still submit with no
-  // inline MFA step-up (hugmesh-mod-ui#1). The SERVER half already exists —
-  // hugmesh-mod-bff-api's ModStepUpGate is the @PreAuthorize companion on exactly
-  // these five endpoints ("hasAnyRole('MOD','ADMIN') and
-  // @modStepUpGate.satisfied(authentication)"), armed by
-  // app.mfa.enforce-sensitive-writes and shipping DARK by default.
+  // MFA STEP-UP (hugmesh-mod-ui#1) — the UI half is WIRED but INERT.
   //
-  // What BLOCKS the admin-ui port is the DENIAL's wire shape, not the dialog.
-  // admin-ui detects step-up with isStepUpRequiredError (mfa/step-up-error.ts),
-  // which needs EITHER the X-Step-Up-Required response header admin-bff stamps
-  // (StepUpRequiredException) OR the literal phrase "requires step-up" in the
-  // {error} body. mod-bff emits NEITHER: a gate denial is a bare Spring
-  // AccessDeniedException 403 with no body and no header — its own
-  // ModStepUpGateControllerTest asserts nothing but isForbidden() on its five
-  // DENIAL cases (it does assert richer bodies on the ALLOWED paths), and that
-  // repo has 0 occurrences of X-Step-Up-Required / "requires step-up" /
-  // StepUpRequiredException. Porting the dialog as-is would therefore be INERT
-  // (the predicate could never fire), so it is deliberately NOT done here.
+  // ban/lift, domainLock/domainUnlock and block now route their failures through
+  // offerStepUp() below, which opens <hug-mfa-step-up-dialog> and re-issues the
+  // SAME request snapshot once the challenge succeeds. Nothing can open it today.
   //
-  // Unblocking is a mod-bff (cross-repo) change: make the gate denial carry the
-  // platform signal — e.g. lift the step-up conjunct out of @PreAuthorize into an
-  // explicit check throwing ApiException.forbidden("... requires step-up ..."),
-  // which the EXISTING legacy-phrase leg already matches with no UI release.
+  // The SERVER half exists but does not SIGNAL. hugmesh-mod-bff-api's
+  // ModStepUpGate is the @PreAuthorize companion on exactly these five endpoints
+  // ("hasAnyRole('MOD','ADMIN') and @modStepUpGate.satisfied(authentication)" —
+  // ModController.java :200, :242, :264, :298, :329), armed by
+  // app.mfa.enforce-sensitive-writes and shipping DARK (SecurityConfig.java:305).
+  // A denial is therefore a bare Spring AccessDeniedException 403: re-measured on
+  // that repo's origin/main 86de22e on 2026-09-17, it has ZERO occurrences of
+  // X-Step-Up-Required / STEP_UP_REQUIRED / stepUpRequired and no
+  // accessDeniedHandler, so neither leg of isStepUpRequiredError can fire.
   //
-  // FIXED since (hugmesh-mod-ui#14), and the reason the above is now the ONLY
-  // blocker: ModBffService no longer collapses write failures to null. Every
-  // write returns a ModWriteResult carrying the status, the response body and the
-  // X-Step-Up-Required header, and surfaceBan/surfaceDomainLock below report what
-  // the server actually said instead of asserting "you cannot ban yourself or a
-  // moderator/administrator" for every failure. So the moment mod-bff signals a
-  // step-up — by either the header or the phrase — the signal REACHES UI code.
-  // See README Roadmap.
+  // ONE cross-repo change unblocks it, with NO release of this remote: make the
+  // denial carry the platform signal — e.g. lift the step-up conjunct out of
+  // @PreAuthorize into an explicit check throwing
+  // ApiException.forbidden("... requires step-up ..."), which the legacy-phrase
+  // leg already matches. mfa/step-up-error.ts carries the full measurement, the
+  // two deliberate divergences from admin-ui's predicate, and the status policy.
+  //
+  // The seam that made this writable at all is hugmesh-mod-ui#15: ModBffService
+  // no longer collapses write failures to null, so every write returns a
+  // ModWriteResult carrying the status, the response body and the
+  // X-Step-Up-Required header, and surfaceBan/surfaceDomainLock report what the
+  // server actually said instead of asserting "you cannot ban yourself or a
+  // moderator/administrator" for every failure. See README Roadmap.
+
   // ── Ban / lift ─────────────────────────────────────────────────────
   /** Parse the ttlSeconds field: blank => undefined (permanent ban). */
   private parsedTtl(): number | undefined {
@@ -353,8 +400,7 @@ export class ModerationConsoleComponent implements OnInit {
       return;
     }
     this.banError.set('');
-    const result = await this.bff.ban(this.banRequest());
-    this.surfaceBan(result, 'Ban');
+    await this.submitBan(this.banRequest(), 'Ban');
   }
 
   async lift(): Promise<void> {
@@ -364,8 +410,14 @@ export class ModerationConsoleComponent implements OnInit {
       return;
     }
     this.banError.set('');
-    const result = await this.bff.lift(this.banRequest());
-    this.surfaceBan(result, 'Lift');
+    await this.submitBan(this.banRequest(), 'Lift');
+  }
+
+  /** Issue — or RE-issue after a step-up — one ban/lift against an unchanging
+   *  snapshot of the form. See {@link PendingStepUp}. */
+  private async submitBan(req: BanRequest, verb: 'Ban' | 'Lift'): Promise<void> {
+    const result = verb === 'Ban' ? await this.bff.ban(req) : await this.bff.lift(req);
+    this.surfaceBan(result, verb, req);
   }
 
   /**
@@ -377,12 +429,21 @@ export class ModerationConsoleComponent implements OnInit {
    * sentence now survives only as the 403 hint, and only when the server itself
    * gave no reason. See hugmesh-mod-ui#14.
    */
-  private surfaceBan(result: ModWriteResult<PendingReconcile>, verb: string): void {
+  private surfaceBan(
+    result: ModWriteResult<PendingReconcile>,
+    verb: 'Ban' | 'Lift',
+    req: BanRequest,
+  ): void {
     if (result.ok) {
       this.banNote.set(this.pendingMessage(result.value, `${verb} accepted`));
       this.banTarget = '';
       this.banTtlSeconds = '';
       this.banReason = '';
+    } else if (
+      this.offerStepUp(result.error, 'ban', verb.toLowerCase(), () => this.submitBan(req, verb))
+    ) {
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.banError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
@@ -397,8 +458,7 @@ export class ModerationConsoleComponent implements OnInit {
     }
     this.domainLockError.set('');
     const body = this.domainLockReason.trim() ? { reason: this.domainLockReason.trim() } : undefined;
-    const result = await this.bff.domainLock(this.domainLockRole, this.domainLockUser.trim(), body);
-    this.surfaceDomainLock(result, 'Domain-lock');
+    await this.submitDomainLock(this.domainLockRole, this.domainLockUser.trim(), 'Domain-lock', body);
   }
 
   async domainUnlock(): Promise<void> {
@@ -408,20 +468,127 @@ export class ModerationConsoleComponent implements OnInit {
       return;
     }
     this.domainLockError.set('');
-    const result = await this.bff.domainUnlock(this.domainLockRole, this.domainLockUser.trim());
-    this.surfaceDomainLock(result, 'Domain-unlock');
+    await this.submitDomainLock(this.domainLockRole, this.domainLockUser.trim(), 'Domain-unlock');
+  }
+
+  /** Issue — or RE-issue after a step-up — one domain-lock/unlock against an
+   *  unchanging snapshot of the form. See {@link PendingStepUp}. */
+  private async submitDomainLock(
+    role: DomainLockRole,
+    user: string,
+    verb: 'Domain-lock' | 'Domain-unlock',
+    body?: { reason: string },
+  ): Promise<void> {
+    const result =
+      verb === 'Domain-lock'
+        ? await this.bff.domainLock(role, user, body)
+        : await this.bff.domainUnlock(role, user);
+    this.surfaceDomainLock(result, verb, () => this.submitDomainLock(role, user, verb, body));
   }
 
   /** Same contract as {@link surfaceBan}: report the server's own reason, and
    *  fall back to the privileged/self-target rule only as a NAMED POSSIBILITY. */
-  private surfaceDomainLock(result: ModWriteResult<PendingReconcile>, verb: string): void {
+  private surfaceDomainLock(
+    result: ModWriteResult<PendingReconcile>,
+    verb: 'Domain-lock' | 'Domain-unlock',
+    retry: () => Promise<void>,
+  ): void {
     if (result.ok) {
       this.domainLockNote.set(this.pendingMessage(result.value, `${verb} accepted`));
       this.domainLockUser = '';
       this.domainLockReason = '';
+    } else if (this.offerStepUp(result.error, 'domainLock', verb.toLowerCase(), retry)) {
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.domainLockError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
+  }
+
+  // ── MFA step-up (hugmesh-mod-ui#1) ─────────────────────────────────
+  /**
+   * If {@code error} is the platform's step-up refusal, TAKE OVER this form's
+   * error line and answer true; otherwise leave everything alone and answer false
+   * so the caller renders its ordinary failure sentence.
+   *
+   * <p>Taking over means one of two things, and the caller must not write over
+   * either: with no challenge open it stores {@code retry}, clears the error and
+   * lets the dialog render; with one already open it stores nothing and writes an
+   * error naming the action the moderator has to finish first. AT MOST ONE
+   * challenge is live at a time — see the {@code live} branch for why.
+   *
+   * <p>INERT AS LANDED — {@code isStepUpRequiredError} cannot return true against
+   * today's mod-bff, which denies with a bare 403 carrying neither signal leg.
+   * The evidence and the unblocking change are in {@code mfa/step-up-error.ts}.
+   */
+  private offerStepUp(
+    error: ModWriteError,
+    form: PendingStepUp['form'],
+    action: string,
+    retry: () => Promise<void>,
+  ): boolean {
+    if (!isStepUpRequiredError(error)) return false;
+    const live = this.pendingStepUp();
+    if (live) {
+      // NEVER overwrite a live challenge. The dialog is INLINE, not modal (its
+      // own .scss sets no position/backdrop/z-index), so the other two forms stay
+      // fully interactive while one is stalled — a moderator really can submit a
+      // second gated write here. Replacing `live` would throw away its retry with
+      // nothing on screen saying so, which is exactly the silent drop
+      // stepUpDismissed() calls the worst outcome; it would also tear down a
+      // ceremony that may already be mid-flight. Refuse the newcomer and say why.
+      this.setFormError(
+        form,
+        `The ${action} was NOT performed — it needs an MFA step-up, and a step-up for the ` +
+          `${live.action} is already open. Finish or cancel that one, then retry this.`,
+      );
+      return true;
+    }
+    this.pendingStepUp.set({ form, action, retry });
+    this.setFormError(form, '');
+    return true;
+  }
+
+  /** The three step-up-gated forms each own an error signal; this is the single
+   *  place that maps a {@link PendingStepUp} form to it. */
+  private setFormError(form: PendingStepUp['form'], message: string): void {
+    if (form === 'ban') this.banError.set(message);
+    else if (form === 'domainLock') this.domainLockError.set(message);
+    else this.blockError.set(message);
+  }
+
+  /** The challenge succeeded: dismiss the dialog and re-issue the SAME write. The
+   *  retry carries no token — mod-bff's gate reads the MFA_SATISFIED marker off
+   *  the caller's own session, which the challenge has just stamped. */
+  async stepUpSatisfied(): Promise<void> {
+    const pending = this.pendingStepUp();
+    if (!pending) return;
+    this.pendingStepUp.set(null);
+    await pending.retry();
+  }
+
+  /**
+   * The moderator cancelled (or the deployment has no MFA): dismiss the dialog and
+   * say plainly that NOTHING was applied. Silence here would be the worst outcome —
+   * the write was refused, and a console that just closes the dialog looks like it
+   * succeeded.
+   */
+  stepUpDismissed(dark = false): void {
+    const pending = this.pendingStepUp();
+    if (!pending) return;
+    this.pendingStepUp.set(null);
+    // Do NOT advise a retry the deployment cannot honour. The dialog reports
+    // `dark` when every /bff/mfa/* call answered 503, i.e. app.casdoor.mfa.enabled
+    // is off; in a deployment with enforce-sensitive-writes=true and that flag off
+    // (mod-bff's own README warns they must be flipped together) no retry from
+    // this console can EVER succeed, so the moderator is told to escalate instead.
+    const message = dark
+      ? `The ${pending.action} was NOT performed — it needs an MFA step-up, but two-factor ` +
+        'authentication is not enabled on this deployment, so it cannot be confirmed here. ' +
+        'Nothing was changed; ask an administrator to enable it.'
+      : `The ${pending.action} was NOT performed — it needs a fresh MFA step-up, which was not ` +
+        'completed. Nothing was changed; retry when you can confirm.';
+    this.setFormError(pending.form, message);
   }
 
   /**

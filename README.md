@@ -439,25 +439,35 @@ checkout to use `make pentest-dast` locally.
 
 - 🔭 **Wire the remaining `@cluster` e2e scenarios into CI** — promote the live-cluster-only
   Playwright + BDD scenarios into the pipeline once a cluster is available to the runner.
-- 🔭 **MFA / step-up awareness — BLOCKED on a mod-bff wire change, not on this remote.**
+- 🔭 **MFA / step-up awareness — the UI half is LANDED but INERT; mod-bff is the only blocker.**
   Platform-wide MFA has shipped (Casdoor TOTP enroll/challenge, a session-level `MFA_SATISFIED`
   authority, and a step-up dialog already live in `login-ui` and `hugmesh-admin-ui`), and
   hugmesh-mod-bff-api already gates this console's five sensitive writes (`POST /block`,
   `POST|DELETE /ban`, `POST|DELETE /domain-lock/{role}/{user}`) with `ModStepUpGate` behind the
-  dark-by-default `app.mfa.enforce-sensitive-writes`. What is missing is the DENIAL SIGNAL, not
-  the dialog: admin-ui's `isStepUpRequiredError` fires on the `X-Step-Up-Required` response header
-  or the literal `"requires step-up"` phrase, and mod-bff emits neither — a gate denial is a bare
-  Spring `AccessDeniedException` 403 with no body and no header. Porting the dialog as-is would be
-  INERT, so it has deliberately not been done. **Unblock it in mod-bff first** (e.g. lift the
-  step-up conjunct out of `@PreAuthorize` into an explicit check throwing
-  `ApiException.forbidden("… requires step-up …")`, which the existing legacy-phrase leg already
-  matches); the UI port is small once a denial is distinguishable.
-  **The UI-side prerequisite is now done** (#14): `ModBffService` no longer collapses write
-  failures to `null` — every write resolves to a `ModWriteResult` carrying the HTTP status, the
-  response body and the `X-Step-Up-Required` header, and the console reports what the server
-  actually said instead of announcing every failure as *"you cannot ban yourself or a
-  moderator/administrator"*. So whenever mod-bff starts signalling a step-up, by either the header
-  or the phrase, the signal reaches UI code; mod-bff is the only remaining blocker.
+  dark-by-default `app.mfa.enforce-sensitive-writes`.
+  **What this remote now has** (#1): `src/app/mfa/` — a detection predicate over `ModWriteError`
+  (`step-up-error.ts`), a trimmed `MfaService` for `POST /bff/mfa/challenge` +
+  `POST /bff/mfa/assert/webauthn/options`, and `MfaStepUpDialogComponent` ported from admin-ui.
+  The moderation console opens it inline under the refused form and re-issues the SAME request
+  snapshot once the challenge succeeds; cancelling says plainly that nothing was applied, and
+  closing it because the deployment has MFA switched off says to escalate rather than to retry.
+  The dialog is inline, not modal, so the other forms stay live while one write is stalled: AT MOST
+  ONE challenge is open at a time — a second gated write is refused with a message naming the one
+  to finish first, rather than silently displacing it.
+  **What is still missing is the DENIAL SIGNAL, in mod-bff.** `isStepUpRequiredError` fires on the
+  `X-Step-Up-Required` response header or the literal `"requires step-up"` phrase, and mod-bff
+  emits neither — a gate denial is a bare Spring `AccessDeniedException` 403 with no body and no
+  header (re-measured on its `origin/main` 86de22e, 2026-09-17: zero occurrences of the header,
+  no `accessDeniedHandler`), and the gate ships dark besides. So the dialog is unreachable today,
+  and its INERTness is pinned by a test that fails the day it stops being true.
+  **Unblock it in mod-bff** (e.g. lift the step-up conjunct out of `@PreAuthorize` into an explicit
+  check throwing `ApiException.forbidden("… requires step-up …")`, which the legacy-phrase leg
+  already matches) — no release of this remote is then needed.
+  The seam that made the UI half writable was #14/#15: `ModBffService` no longer collapses write
+  failures to `null`, so every write resolves to a `ModWriteResult` carrying the HTTP status, the
+  response body and the `X-Step-Up-Required` header.
+  **Not yet exercised by a human** — the dialog has unit coverage only; nothing has driven a real
+  Casdoor challenge from this console.
 - 🔭 **Server-wide block, real backend for Mastodon** — the Mastodon (akkoma) leg is already wired
   to confirmed `pleroma-admin` verbs but ships dark by default behind
   `external.mastodon.enabled`; flipping it on in a given deployment is an operations task, not a UI

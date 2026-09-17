@@ -13,6 +13,7 @@ import {
 import { ModWriteError, ModWriteResult } from './mod-write-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
+import { MfaService } from './mfa/mfa.service';
 
 const request: ModerationRequest = {
   id: 7,
@@ -72,6 +73,9 @@ describe('ModerationConsoleComponent', () => {
   let component: ModerationConsoleComponent;
   let bff: jasmine.SpyObj<ModBffService>;
   let admin: jasmine.SpyObj<AdminBffService>;
+  // The step-up dialog is a child of this component, so its MfaService must be
+  // resolvable even in the tests that never open it (hugmesh-mod-ui#1).
+  let mfa: jasmine.SpyObj<MfaService>;
   let moderation$: BehaviorSubject<ModerationRequest[]>;
   let audit$: BehaviorSubject<ModAction[]>;
   // The target pickers pull their suggestions from ModDirectoryService, which subscribes
@@ -109,12 +113,16 @@ describe('ModerationConsoleComponent', () => {
     admin = jasmine.createSpyObj<AdminBffService>('AdminBffService', ['decide']);
     admin.decide.and.resolveTo({ ...request, status: 'approved' });
 
+    mfa = jasmine.createSpyObj<MfaService>('MfaService', ['challenge', 'assertWebauthnOptions']);
+    mfa.challenge.and.resolveTo({ ok: true, dark: false, status: 200, data: { mfaSatisfied: true } });
+
     await TestBed.configureTestingModule({
       imports: [ModerationConsoleComponent],
       providers: [
         { provide: ModBffService, useValue: bff },
         { provide: AdminBffService, useValue: admin },
         { provide: SessionService, useValue: { isAdmin } },
+        { provide: MfaService, useValue: mfa },
       ],
     }).compileComponents();
     fixture = TestBed.createComponent(ModerationConsoleComponent);
@@ -531,22 +539,42 @@ describe('ModerationConsoleComponent', () => {
       expect(component.banError()).toContain('privileged or self target');
     });
 
+    // The fixture message is deliberately NOT a step-up one: since
+    // hugmesh-mod-ui#1 a recognised step-up refusal opens the challenge dialog
+    // instead of rendering a sentence, so a step-up fixture would no longer be
+    // testing what this case is about.
     it('prefers the server\u2019s OWN reason over the privileged/self guess', async () => {
-      bff.ban.and.resolveTo(failed(403, 'Forbidden', 'ban requires step-up re-authentication'));
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', 'that user is already banned on matrix'));
       fixture.detectChanges();
       component.banTarget = 'bad-user';
       await component.ban();
-      expect(component.banError()).toContain('ban requires step-up re-authentication');
+      expect(component.banError()).toContain('that user is already banned on matrix');
       expect(component.banError()).not.toContain('gave no reason');
     });
 
-    it('surfaces the X-Step-Up-Required signal, and says the console cannot step up yet', async () => {
+    // Superseded by hugmesh-mod-ui#1: the console USED to render
+    // "cannot complete a step-up yet" for this exact refusal. It now recognises it
+    // and offers the inline challenge instead. The step-up wiring has its own
+    // describe block below; this keeps the assertion where the ban tests live.
+    it('offers the step-up challenge for a signalled refusal rather than a sentence', async () => {
       bff.ban.and.resolveTo(failed(403, 'Forbidden', null, 'X-ModBan-StepUp'));
       fixture.detectChanges();
       component.banTarget = 'bad-user';
       await component.ban();
+      expect(component.pendingStepUp()?.form).toBe('ban');
+      expect(component.banError()).toBe('');
+    });
+
+    // ...but a step-up signal on a 401 is NOT offered: the session is gone, so a
+    // challenge cannot succeed, and "sign in again" is the only correct answer.
+    it('does not offer a challenge for a step-up signal on a 401', async () => {
+      bff.ban.and.resolveTo(failed(401, 'Unauthorized', null, 'X-ModBan-StepUp'));
+      fixture.detectChanges();
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.pendingStepUp()).toBeNull();
+      expect(component.banError()).toContain('Sign in again');
       expect(component.banError()).toContain('X-Step-Up-Required: X-ModBan-StepUp');
-      expect(component.banError()).toContain('cannot complete a step-up yet');
     });
 
     // The regression this whole change exists to prevent (#14): a 5xx and a
@@ -922,6 +950,254 @@ describe('ModerationConsoleComponent', () => {
       el.querySelector<HTMLButtonElement>('[data-testid="mc-dl-unlock"]')!.click();
       expect(bff.lift).toHaveBeenCalled();
       expect(bff.domainUnlock).toHaveBeenCalled();
+    });
+  });
+  /**
+   * hugmesh-mod-ui#1 — the inline MFA step-up, wired but INERT.
+   *
+   * The INERT half is pinned first and deliberately: against the denial
+   * hugmesh-mod-bff-api actually sends today (a bare @PreAuthorize 403 with no
+   * body and no X-Step-Up-Required header) nothing here may open a dialog. The
+   * rest of the suite then exercises the wiring against the signal the platform
+   * WILL send, so the UI half is reviewable before the server half exists.
+   */
+  describe('MFA step-up (hugmesh-mod-ui#1)', () => {
+    /** The signal admin-bff stamps; mod-bff sends none of this yet. */
+    const SIGNAL = 'X-ImageGen-StepUp';
+
+    function dialogs(): NodeListOf<HTMLElement> {
+      return fixture.nativeElement.querySelectorAll('[data-testid="mfa-stepup-dialog"]');
+    }
+
+    it('does NOT open the dialog for the bare 403 mod-bff sends today', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden'));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      fixture.detectChanges();
+      expect(component.pendingStepUp()).toBeNull();
+      expect(dialogs().length).toBe(0);
+      // ...and the ordinary honest sentence is still what the moderator sees.
+      expect(component.banError()).toContain('HTTP 403');
+    });
+
+    it('does NOT open the dialog for the privileged/self-target refusal', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', 'you cannot ban a moderator or administrator'));
+      component.banTarget = 'a-mod';
+      await component.ban();
+      expect(component.pendingStepUp()).toBeNull();
+      expect(component.banError()).toContain('you cannot ban a moderator');
+    });
+
+    it('opens the dialog under the BAN form only, once the denial carries the signal', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      fixture.detectChanges();
+      expect(component.pendingStepUp()?.form).toBe('ban');
+      expect(dialogs().length).toBe(1);
+      // The refusal sentence is replaced by the dialog, not stacked under it.
+      expect(component.banError()).toBe('');
+    });
+
+    it('retries the SAME snapshot after a step-up, even if the form was edited meanwhile', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = '@bad:evil.example';
+      component.banReason = 'abuse';
+      await component.ban();
+      expect(component.pendingStepUp()).not.toBeNull();
+
+      // The moderator retypes the field while hunting for their authenticator.
+      component.banTarget = 'someone-else';
+      bff.ban.calls.reset();
+      bff.ban.and.resolveTo(ok({ state: 'pending-reconcile' }));
+      await component.stepUpSatisfied();
+
+      expect(bff.ban).toHaveBeenCalledWith(
+        jasmine.objectContaining({ target: '@bad:evil.example', reason: 'abuse' }),
+      );
+      expect(component.pendingStepUp()).toBeNull();
+      expect(component.banNote()).toContain('pending reconcile');
+    });
+
+    it('retries a LIFT as a lift, not as a ban', async () => {
+      fixture.detectChanges();
+      bff.lift.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.lift();
+      bff.lift.and.resolveTo(ok({ state: 'restored' }));
+      await component.stepUpSatisfied();
+      expect(bff.lift).toHaveBeenCalledTimes(2);
+      expect(bff.ban).not.toHaveBeenCalled();
+    });
+
+    it('says plainly that NOTHING was applied when the moderator cancels', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      bff.ban.calls.reset();
+      component.stepUpDismissed();
+      fixture.detectChanges();
+      expect(bff.ban).not.toHaveBeenCalled();
+      expect(component.pendingStepUp()).toBeNull();
+      expect(component.banError()).toContain('NOT performed');
+      expect(component.banError()).toContain('Nothing was changed');
+      expect(dialogs().length).toBe(0);
+    });
+
+    it('opens under the DOMAIN-LOCK form and retries that role/user pair', async () => {
+      fixture.detectChanges();
+      bff.domainLock.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.domainLockRole = 'ROLE_MASTODON_DOMAINLOCKED';
+      component.domainLockUser = 'bad-user';
+      component.domainLockReason = 'evasion';
+      await component.domainLock();
+      expect(component.pendingStepUp()?.form).toBe('domainLock');
+
+      bff.domainLock.calls.reset();
+      bff.domainLock.and.resolveTo(ok({ state: 'pending-reconcile' }));
+      await component.stepUpSatisfied();
+      expect(bff.domainLock).toHaveBeenCalledWith('ROLE_MASTODON_DOMAINLOCKED', 'bad-user', {
+        reason: 'evasion',
+      });
+    });
+
+    it('retries a domain-UNLOCK as an unlock', async () => {
+      fixture.detectChanges();
+      bff.domainUnlock.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.domainLockUser = 'bad-user';
+      await component.domainUnlock();
+      bff.domainUnlock.and.resolveTo(ok({ state: 'cleared' }));
+      await component.stepUpSatisfied();
+      expect(bff.domainUnlock).toHaveBeenCalledTimes(2);
+      expect(bff.domainLock).not.toHaveBeenCalled();
+    });
+
+    it('opens under the BLOCK form and retries the same block snapshot', async () => {
+      fixture.detectChanges();
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.platform = 'mastodon';
+      component.scope = 'instance';
+      component.target = 'evil.example';
+      await component.block();
+      expect(component.pendingStepUp()?.form).toBe('block');
+
+      bff.block.calls.reset();
+      const blocked: BlockResult = { blocked: action, external: 'ok', note: 'Recorded.' };
+      bff.block.and.resolveTo(ok(blocked));
+      await component.stepUpSatisfied();
+      expect(bff.block).toHaveBeenCalledWith({
+        platform: 'mastodon', scope: 'instance', target: 'evil.example', reason: undefined,
+      });
+      expect(component.blockNote()).toContain('Recorded.');
+    });
+
+    it('recognises the legacy phrase leg too, so an unsignalled body still works', async () => {
+      fixture.detectChanges();
+      bff.block.and.resolveTo(failed(403, 'Forbidden', 'block requires step-up re-authentication'));
+      component.target = 'evil.example';
+      await component.block();
+      expect(component.pendingStepUp()?.form).toBe('block');
+    });
+
+    it('surfaces a step-up refusal that repeats after the challenge, instead of looping', async () => {
+      fixture.detectChanges();
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.target = 'evil.example';
+      await component.block();
+      await component.stepUpSatisfied();
+      // The write was refused again for the same reason: the dialog re-opens rather
+      // than the console claiming success. One re-open per attempt, never a spin.
+      expect(component.pendingStepUp()?.form).toBe('block');
+      expect(bff.block).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing when satisfied/dismissed fire with no pending write', async () => {
+      fixture.detectChanges();
+      await component.stepUpSatisfied();
+      component.stepUpDismissed();
+      expect(component.blockError()).toBe('');
+      expect(component.banError()).toBe('');
+      expect(component.domainLockError()).toBe('');
+    });
+
+    /*
+     * A SECOND stalled write must never silently displace the first. The dialog is
+     * inline, not modal, so every other form on the console stays live while one is
+     * stalled -- before this, offerStepUp() overwrote pendingStepUp unconditionally
+     * and the first write's retry was lost with nothing on screen saying so.
+     */
+    it('refuses a second challenge instead of dropping the first, and names the open one', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.pendingStepUp()?.form).toBe('ban');
+
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.target = 'evil.example';
+      await component.block();
+      fixture.detectChanges();
+
+      // The BAN keeps the dialog -- it is not torn out from under a live ceremony.
+      expect(component.pendingStepUp()?.form).toBe('ban');
+      expect(dialogs().length).toBe(1);
+      // ...and the BLOCK form says so in words, naming what to finish first.
+      expect(component.blockError()).toContain('NOT performed');
+      expect(component.blockError()).toContain('already open');
+      expect(component.blockError()).toContain('ban');
+      expect(component.blockNote()).toBe('');
+    });
+
+    it('still retries the FIRST write after a refused second challenge', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.target = 'evil.example';
+      await component.block();
+
+      bff.ban.calls.reset();
+      bff.ban.and.resolveTo(ok({ state: 'pending-reconcile' }));
+      await component.stepUpSatisfied();
+
+      // The retry that survived is the BAN's -- the block never took its place.
+      expect(bff.ban).toHaveBeenCalledTimes(1);
+      expect(bff.ban).toHaveBeenCalledWith(jasmine.objectContaining({ target: 'bad-user' }));
+      expect(bff.block).toHaveBeenCalledTimes(1);
+      expect(component.pendingStepUp()).toBeNull();
+    });
+
+    /*
+     * When the dialog closed because every /bff/mfa/* call answered 503, the
+     * deployment has MFA off and NO retry from this console can ever succeed --
+     * so the moderator must be told to escalate, not to try again.
+     */
+    it('tells the moderator to escalate, not retry, when the dialog closed dark', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      component.stepUpDismissed(true);
+      expect(component.banError()).toContain('NOT performed');
+      expect(component.banError()).toContain('not enabled on this deployment');
+      expect(component.banError()).toContain('ask an administrator');
+      expect(component.banError()).not.toContain('retry when you can confirm');
+    });
+
+    it('still says "retry when you can confirm" on a plain cancel', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      component.stepUpDismissed(false);
+      expect(component.banError()).toContain('retry when you can confirm');
+      expect(component.banError()).not.toContain('not enabled on this deployment');
     });
   });
 });

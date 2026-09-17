@@ -1,0 +1,124 @@
+<section
+  class="hug-mfa-stepup"
+  data-testid="mfa-stepup-dialog"
+  role="region"
+  aria-labelledby="hug-mfa-stepup-heading"
+>
+  <h4 id="hug-mfa-stepup-heading">Confirm it's you</h4>
+
+  <ng-container *ngIf="dark(); else live">
+    <p class="mfa-help" data-testid="mfa-stepup-dark">
+      Two-factor authentication is not enabled yet on this deployment, so this action cannot
+      be confirmed here. Ask an administrator to enable it.
+    </p>
+    <div class="mfa-actions">
+      <button type="button" class="mfa-btn" data-testid="mfa-stepup-close" (click)="cancel()">
+        Close
+      </button>
+    </div>
+  </ng-container>
+
+  <ng-template #live>
+    <p data-testid="mfa-stepup-intro">
+      {{ action() }} needs a fresh security check. Confirm with your authenticator, a passkey,
+      or a recovery code — then it is submitted again exactly as you entered it.
+    </p>
+
+    <p
+      *ngIf="error()"
+      class="mfa-error"
+      data-testid="mfa-stepup-error"
+      role="alert"
+      aria-live="assertive"
+    >{{ error() }}</p>
+
+    <fieldset class="mfa-methods">
+      <legend>How would you like to verify?</legend>
+      <label>
+        <input
+          type="radio"
+          name="stepup-method"
+          data-testid="mfa-stepup-method-totp"
+          [checked]="method() === 'totp'"
+          (change)="setMethod('totp')"
+        />
+        Authenticator app (6-digit code)
+      </label>
+      <label>
+        <input
+          type="radio"
+          name="stepup-method"
+          data-testid="mfa-stepup-method-webauthn"
+          [checked]="method() === 'webauthn'"
+          [disabled]="!webauthnAvailable"
+          (change)="setMethod('webauthn')"
+        />
+        Passkey
+      </label>
+      <label>
+        <input
+          type="radio"
+          name="stepup-method"
+          data-testid="mfa-stepup-method-recovery"
+          [checked]="method() === 'recovery'"
+          (change)="setMethod('recovery')"
+        />
+        Recovery code
+      </label>
+    </fieldset>
+
+    <div class="mfa-actions" *ngIf="method() === 'webauthn'; else codeForm">
+      <button
+        type="button"
+        class="mfa-btn primary"
+        data-testid="mfa-stepup-webauthn-go"
+        [disabled]="busy() || !webauthnAvailable"
+        (click)="useWebauthn()"
+      >
+        Verify with a passkey
+      </button>
+      <button type="button" class="mfa-btn" data-testid="mfa-stepup-cancel" (click)="cancel()">
+        Cancel
+      </button>
+    </div>
+
+    <ng-template #codeForm>
+      <form class="mfa-verify" (ngSubmit)="submitCode()" novalidate>
+        <label for="hug-mfa-stepup-code">
+          {{ method() === 'totp' ? '6-digit code' : 'Recovery code' }}
+        </label>
+        <input
+          id="hug-mfa-stepup-code"
+          name="code"
+          data-testid="mfa-stepup-code"
+          type="text"
+          [attr.inputmode]="method() === 'totp' ? 'numeric' : null"
+          autocomplete="one-time-code"
+          [(ngModel)]="code"
+          aria-describedby="hug-mfa-stepup-code-help"
+        />
+        <p class="mfa-help" id="hug-mfa-stepup-code-help">
+          <ng-container *ngIf="method() === 'totp'; else recoveryHelp">
+            Enter the current 6-digit code from your authenticator app.
+          </ng-container>
+          <ng-template #recoveryHelp>
+            Enter one of the recovery codes you saved when you set up two-factor.
+          </ng-template>
+        </p>
+        <div class="mfa-actions">
+          <button
+            type="submit"
+            class="mfa-btn primary"
+            data-testid="mfa-stepup-submit"
+            [disabled]="busy() || !codeValid()"
+          >
+            Verify
+          </button>
+          <button type="button" class="mfa-btn" data-testid="mfa-stepup-cancel" (click)="cancel()">
+            Cancel
+          </button>
+        </div>
+      </form>
+    </ng-template>
+  </ng-template>
+</section>

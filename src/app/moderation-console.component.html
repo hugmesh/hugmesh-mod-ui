@@ -267,6 +267,17 @@
     >{{ banNote() }}</span>
   </form>
 
+  <!-- MFA step-up for the ban/lift write (hugmesh-mod-ui#1). Rendered OUTSIDE the
+       <form> above: the dialog has a <form> of its own and nested forms are
+       invalid HTML. INERT as landed — mod-bff denies with a bare 403 that
+       carries no step-up signal, so pendingStepUp() is never set. -->
+  <hug-mfa-step-up-dialog
+    *ngIf="pendingStepUp()?.form === 'ban'"
+    [action]="'This ' + (pendingStepUp()?.action || 'action')"
+    (satisfied)="stepUpSatisfied()"
+    (dismissed)="stepUpDismissed($event)"
+  ></hug-mfa-step-up-dialog>
+
   <!-- ── Domain-lock (force local-only) ────────────────────────────── -->
   <h3 id="mc-domainlock-heading">Domain-lock (force local-only)</h3>
   <form (ngSubmit)="domainLock()" aria-labelledby="mc-domainlock-heading" aria-describedby="mc-dl-intro" novalidate>
@@ -329,6 +340,17 @@
       aria-live="polite"
     >{{ domainLockNote() }}</span>
   </form>
+
+  <!-- MFA step-up for the domain-lock/unlock write (hugmesh-mod-ui#1). Rendered OUTSIDE the
+       <form> above: the dialog has a <form> of its own and nested forms are
+       invalid HTML. INERT as landed — mod-bff denies with a bare 403 that
+       carries no step-up signal, so pendingStepUp() is never set. -->
+  <hug-mfa-step-up-dialog
+    *ngIf="pendingStepUp()?.form === 'domainLock'"
+    [action]="'This ' + (pendingStepUp()?.action || 'action')"
+    (satisfied)="stepUpSatisfied()"
+    (dismissed)="stepUpDismissed($event)"
+  ></hug-mfa-step-up-dialog>
 
   <!-- ── Server-wide block form ────────────────────────────────────── -->
   <h3 id="mc-block-heading">Server-wide block</h3>
@@ -395,6 +417,17 @@
       aria-live="polite"
     >{{ blockNote() }}</span>
   </form>
+
+  <!-- MFA step-up for the server-wide block write (hugmesh-mod-ui#1). Rendered OUTSIDE the
+       <form> above: the dialog has a <form> of its own and nested forms are
+       invalid HTML. INERT as landed — mod-bff denies with a bare 403 that
+       carries no step-up signal, so pendingStepUp() is never set. -->
+  <hug-mfa-step-up-dialog
+    *ngIf="pendingStepUp()?.form === 'block'"
+    [action]="'This ' + (pendingStepUp()?.action || 'action')"
+    (satisfied)="stepUpSatisfied()"
+    (dismissed)="stepUpDismissed($event)"
+  ></hug-mfa-step-up-dialog>
 
   <!-- ── Administrator-only actions (DISABLED + helptext, no mod endpoint) ── -->
   <h3 id="mc-admin-only-heading">Administrator-only actions</h3>

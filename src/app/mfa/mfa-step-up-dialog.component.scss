@@ -1,0 +1,95 @@
+// Styled ONLY with the cross-repo --hug-* palette contract (src/styles.scss) —
+// this remote must never reach for the host shell's gold chrome. See
+// styles/_tokens.scss for why the $neon/$pastel tokens are host-legacy.
+:host {
+  display: block;
+}
+
+.hug-mfa-stepup {
+  margin-block: 0.75rem;
+  padding: 0.75rem 1rem;
+  max-width: 44rem;
+  border: 1px solid var(--hug-accent);
+  border-radius: 6px;
+  background: var(--hug-bg-1);
+  color: var(--hug-text);
+
+  h4 {
+    margin: 0 0 0.5rem;
+    color: var(--hug-accent-soft);
+  }
+
+  p {
+    margin: 0 0 0.5rem;
+  }
+
+  .mfa-help {
+    color: var(--hug-text-muted);
+    font-size: 0.9em;
+  }
+
+  // --hug-error, so the message differs from body text by more than colour
+  // alone; it is also given role="alert" in the template.
+  .mfa-error {
+    color: var(--hug-error);
+    font-weight: 600;
+  }
+
+  .mfa-methods {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 0 0 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--hug-border);
+    border-radius: 4px;
+
+    legend {
+      padding: 0 0.25rem;
+      color: var(--hug-text-muted);
+    }
+
+    label {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+  }
+
+  .mfa-verify {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+
+    input[type='text'] {
+      min-width: 12rem;
+    }
+  }
+
+  .mfa-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .mfa-btn {
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--hug-accent);
+    border-radius: 4px;
+    background: var(--hug-bg-2);
+    color: var(--hug-text);
+    cursor: pointer;
+
+    &.primary {
+      background: var(--hug-accent);
+      color: var(--hug-bg-0);
+      font-weight: 600;
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+}
