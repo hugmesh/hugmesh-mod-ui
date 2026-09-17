@@ -21,9 +21,10 @@ import { ChallengeFactor, MfaResult, WebAuthnOptions } from './mfa.types';
  *       (hugmesh-generator {@code specs/cluster/apps/20-gateway-fe.yaml}) declares
  *       the specific prefixes first — {@code /bff/mod/**}, {@code /bff/user/**},
  *       {@code /bff/forum/**}, {@code /bff/wiki/**}, {@code /bff/mesh/**}, … —
- *       and ends with a {@code /bff/**} catch-all pointing at
- *       {@code hugmesh-admin-bff-api} (:434-436). There is NO
- *       {@code /bff/mfa/**} row, so a {@code /bff/mfa/challenge} lands on that
+ *       and ends with a {@code /bff/**} catch-all — the route whose {@code id} is
+ *       {@code hugmesh-admin-bff-api}. FIND IT BY THAT ID, not by line: it sits at
+ *       :453-455 on generator main 71c4cee and at :437-439 on c00ddf78. There is
+ *       NO {@code /bff/mfa/**} row, so a {@code /bff/mfa/challenge} lands on that
  *       catch-all and reaches admin-bff, which DOES carry auth-core.</li>
  *   <li><b>Access.</b> {@code gateway_route_access}
  *       ({@code specs/cluster/manifests/route-access/initdb/20-schema.sql}) has no
@@ -38,7 +39,15 @@ import { ChallengeFactor, MfaResult, WebAuthnOptions } from './mfa.types';
  * </ol>
  *
  * <p>Both facts are CONFIGURATION of another repo, not a contract this remote
- * owns, so they are stated here to be re-checked rather than assumed. If a
+ * owns, so they are stated here to be re-checked rather than assumed. They are
+ * NOT a new discovery: hugmesh-generator {@code docs/MFA-ROLLOUT.md} §2.1
+ * ("Enrolling") already records the same measurement for the enrollment half —
+ * no {@code gateway_route_access} row in the seed or in the gateway's baked
+ * {@code CanonicalSeed}, no {@code /bff/**} floor row, therefore {@code NO_RULE}
+ * and a forward on {@code authenticated()} — and carries the matching warning:
+ * ⚠ if a {@code /bff/**} FLOOR row is ever added to the seed it becomes the
+ * deciding rule for {@code /bff/mfa/**} and can make MFA unreachable exactly when
+ * it is needed. That warning applies verbatim to the step-up half below. If a
  * {@code /bff/mfa/**} route-access row is ever added without ROLE_MOD, this
  * dialog stops working for exactly the role it exists for — and the failure is a
  * gateway 403, which the dialog reports as "that did not verify", not as a

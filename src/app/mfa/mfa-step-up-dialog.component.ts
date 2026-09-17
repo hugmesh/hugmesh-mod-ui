@@ -56,9 +56,16 @@ export class MfaStepUpDialogComponent {
   /** Emitted once the challenge succeeds — the caller retries its write and
    *  dismisses this dialog. */
   @Output() readonly satisfied = new EventEmitter<void>();
-  /** Emitted when the moderator cancels — the caller dismisses this dialog and
-   *  does NOT retry. */
-  @Output() readonly dismissed = new EventEmitter<void>();
+  /**
+   * Emitted when this dialog closes WITHOUT a satisfied challenge — the caller
+   * dismisses it and does NOT retry.
+   *
+   * <p>The payload is {@link dark}: true when every {@code /bff/mfa/*} call
+   * answered 503, i.e. the deployment has MFA switched off. The caller needs the
+   * distinction because "you cancelled, retry when ready" is WRONG advice in a
+   * dark deployment — there, no retry from this console can ever succeed.
+   */
+  @Output() readonly dismissed = new EventEmitter<boolean>();
 
   readonly method = signal<Method>('totp');
   readonly error = signal('');
@@ -133,7 +140,7 @@ export class MfaStepUpDialogComponent {
   cancel(): void {
     this.error.set('');
     this.code = '';
-    this.dismissed.emit();
+    this.dismissed.emit(this.dark());
   }
 
   private async send(factor: ChallengeFactor, credential: string, alreadyBusy = false): Promise<void> {

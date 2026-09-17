@@ -1124,5 +1124,80 @@ describe('ModerationConsoleComponent', () => {
       expect(component.banError()).toBe('');
       expect(component.domainLockError()).toBe('');
     });
+
+    /*
+     * A SECOND stalled write must never silently displace the first. The dialog is
+     * inline, not modal, so every other form on the console stays live while one is
+     * stalled -- before this, offerStepUp() overwrote pendingStepUp unconditionally
+     * and the first write's retry was lost with nothing on screen saying so.
+     */
+    it('refuses a second challenge instead of dropping the first, and names the open one', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      expect(component.pendingStepUp()?.form).toBe('ban');
+
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.target = 'evil.example';
+      await component.block();
+      fixture.detectChanges();
+
+      // The BAN keeps the dialog -- it is not torn out from under a live ceremony.
+      expect(component.pendingStepUp()?.form).toBe('ban');
+      expect(dialogs().length).toBe(1);
+      // ...and the BLOCK form says so in words, naming what to finish first.
+      expect(component.blockError()).toContain('NOT performed');
+      expect(component.blockError()).toContain('already open');
+      expect(component.blockError()).toContain('ban');
+      expect(component.blockNote()).toBe('');
+    });
+
+    it('still retries the FIRST write after a refused second challenge', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.target = 'evil.example';
+      await component.block();
+
+      bff.ban.calls.reset();
+      bff.ban.and.resolveTo(ok({ state: 'pending-reconcile' }));
+      await component.stepUpSatisfied();
+
+      // The retry that survived is the BAN's -- the block never took its place.
+      expect(bff.ban).toHaveBeenCalledTimes(1);
+      expect(bff.ban).toHaveBeenCalledWith(jasmine.objectContaining({ target: 'bad-user' }));
+      expect(bff.block).toHaveBeenCalledTimes(1);
+      expect(component.pendingStepUp()).toBeNull();
+    });
+
+    /*
+     * When the dialog closed because every /bff/mfa/* call answered 503, the
+     * deployment has MFA off and NO retry from this console can ever succeed --
+     * so the moderator must be told to escalate, not to try again.
+     */
+    it('tells the moderator to escalate, not retry, when the dialog closed dark', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      component.stepUpDismissed(true);
+      expect(component.banError()).toContain('NOT performed');
+      expect(component.banError()).toContain('not enabled on this deployment');
+      expect(component.banError()).toContain('ask an administrator');
+      expect(component.banError()).not.toContain('retry when you can confirm');
+    });
+
+    it('still says "retry when you can confirm" on a plain cancel', async () => {
+      fixture.detectChanges();
+      bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+      component.banTarget = 'bad-user';
+      await component.ban();
+      component.stepUpDismissed(false);
+      expect(component.banError()).toContain('retry when you can confirm');
+      expect(component.banError()).not.toContain('not enabled on this deployment');
+    });
   });
 });

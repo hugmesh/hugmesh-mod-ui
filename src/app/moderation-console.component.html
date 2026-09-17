@@ -275,7 +275,7 @@
     *ngIf="pendingStepUp()?.form === 'ban'"
     [action]="'This ' + (pendingStepUp()?.action || 'action')"
     (satisfied)="stepUpSatisfied()"
-    (dismissed)="stepUpDismissed()"
+    (dismissed)="stepUpDismissed($event)"
   ></hug-mfa-step-up-dialog>
 
   <!-- ── Domain-lock (force local-only) ────────────────────────────── -->
@@ -349,7 +349,7 @@
     *ngIf="pendingStepUp()?.form === 'domainLock'"
     [action]="'This ' + (pendingStepUp()?.action || 'action')"
     (satisfied)="stepUpSatisfied()"
-    (dismissed)="stepUpDismissed()"
+    (dismissed)="stepUpDismissed($event)"
   ></hug-mfa-step-up-dialog>
 
   <!-- ── Server-wide block form ────────────────────────────────────── -->
@@ -426,7 +426,7 @@
     *ngIf="pendingStepUp()?.form === 'block'"
     [action]="'This ' + (pendingStepUp()?.action || 'action')"
     (satisfied)="stepUpSatisfied()"
-    (dismissed)="stepUpDismissed()"
+    (dismissed)="stepUpDismissed($event)"
   ></hug-mfa-step-up-dialog>
 
   <!-- ── Administrator-only actions (DISABLED + helptext, no mod endpoint) ── -->

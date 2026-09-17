@@ -449,7 +449,11 @@ checkout to use `make pentest-dast` locally.
   (`step-up-error.ts`), a trimmed `MfaService` for `POST /bff/mfa/challenge` +
   `POST /bff/mfa/assert/webauthn/options`, and `MfaStepUpDialogComponent` ported from admin-ui.
   The moderation console opens it inline under the refused form and re-issues the SAME request
-  snapshot once the challenge succeeds; cancelling says plainly that nothing was applied.
+  snapshot once the challenge succeeds; cancelling says plainly that nothing was applied, and
+  closing it because the deployment has MFA switched off says to escalate rather than to retry.
+  The dialog is inline, not modal, so the other forms stay live while one write is stalled: AT MOST
+  ONE challenge is open at a time — a second gated write is refused with a message naming the one
+  to finish first, rather than silently displacing it.
   **What is still missing is the DENIAL SIGNAL, in mod-bff.** `isStepUpRequiredError` fires on the
   `X-Step-Up-Required` response header or the literal `"requires step-up"` phrase, and mod-bff
   emits neither — a gate denial is a bare Spring `AccessDeniedException` 403 with no body and no

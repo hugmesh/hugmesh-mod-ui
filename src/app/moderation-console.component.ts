@@ -43,7 +43,10 @@ const FORBIDDEN_HINT =
  * made the same call ("retry the same snapshot").
  */
 interface PendingStepUp {
-  /** Which form is stalled — the console renders the dialog under that form only. */
+  /** Which form is stalled — the console renders the dialog under that form only.
+   *  Exactly ONE of these exists at a time: {@code offerStepUp} refuses to replace
+   *  a live one, because replacing it would discard the stalled write's retry with
+   *  nothing on screen saying so. */
   readonly form: 'ban' | 'domainLock' | 'block';
   /** The action, lower-case, as it reads mid-sentence ("ban", "domain-lock"). */
   readonly action: string;
@@ -335,7 +338,8 @@ export class ModerationConsoleComponent implements OnInit {
       this.target = '';
       this.reason = '';
     } else if (this.offerStepUp(result.error, 'block', 'block', () => this.submitBlock(req))) {
-      this.blockError.set('');
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.blockError.set(describeWriteFailure(result.error, 'block', FORBIDDEN_HINT));
     }
@@ -438,7 +442,8 @@ export class ModerationConsoleComponent implements OnInit {
     } else if (
       this.offerStepUp(result.error, 'ban', verb.toLowerCase(), () => this.submitBan(req, verb))
     ) {
-      this.banError.set('');
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.banError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
@@ -493,7 +498,8 @@ export class ModerationConsoleComponent implements OnInit {
       this.domainLockUser = '';
       this.domainLockReason = '';
     } else if (this.offerStepUp(result.error, 'domainLock', verb.toLowerCase(), retry)) {
-      this.domainLockError.set('');
+      // offerStepUp owns this form's error line in the step-up case — it CLEARS it
+      // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.domainLockError.set(describeWriteFailure(result.error, verb.toLowerCase(), FORBIDDEN_HINT));
     }
@@ -501,9 +507,15 @@ export class ModerationConsoleComponent implements OnInit {
 
   // ── MFA step-up (hugmesh-mod-ui#1) ─────────────────────────────────
   /**
-   * If {@code error} is the platform's step-up refusal, open the challenge dialog
-   * over {@code form} and remember {@code retry}; otherwise leave everything
-   * alone and answer false so the caller renders its ordinary failure sentence.
+   * If {@code error} is the platform's step-up refusal, TAKE OVER this form's
+   * error line and answer true; otherwise leave everything alone and answer false
+   * so the caller renders its ordinary failure sentence.
+   *
+   * <p>Taking over means one of two things, and the caller must not write over
+   * either: with no challenge open it stores {@code retry}, clears the error and
+   * lets the dialog render; with one already open it stores nothing and writes an
+   * error naming the action the moderator has to finish first. AT MOST ONE
+   * challenge is live at a time — see the {@code live} branch for why.
    *
    * <p>INERT AS LANDED — {@code isStepUpRequiredError} cannot return true against
    * today's mod-bff, which denies with a bare 403 carrying neither signal leg.
@@ -516,8 +528,33 @@ export class ModerationConsoleComponent implements OnInit {
     retry: () => Promise<void>,
   ): boolean {
     if (!isStepUpRequiredError(error)) return false;
+    const live = this.pendingStepUp();
+    if (live) {
+      // NEVER overwrite a live challenge. The dialog is INLINE, not modal (its
+      // own .scss sets no position/backdrop/z-index), so the other two forms stay
+      // fully interactive while one is stalled — a moderator really can submit a
+      // second gated write here. Replacing `live` would throw away its retry with
+      // nothing on screen saying so, which is exactly the silent drop
+      // stepUpDismissed() calls the worst outcome; it would also tear down a
+      // ceremony that may already be mid-flight. Refuse the newcomer and say why.
+      this.setFormError(
+        form,
+        `The ${action} was NOT performed — it needs an MFA step-up, and a step-up for the ` +
+          `${live.action} is already open. Finish or cancel that one, then retry this.`,
+      );
+      return true;
+    }
     this.pendingStepUp.set({ form, action, retry });
+    this.setFormError(form, '');
     return true;
+  }
+
+  /** The three step-up-gated forms each own an error signal; this is the single
+   *  place that maps a {@link PendingStepUp} form to it. */
+  private setFormError(form: PendingStepUp['form'], message: string): void {
+    if (form === 'ban') this.banError.set(message);
+    else if (form === 'domainLock') this.domainLockError.set(message);
+    else this.blockError.set(message);
   }
 
   /** The challenge succeeded: dismiss the dialog and re-issue the SAME write. The
@@ -536,16 +573,22 @@ export class ModerationConsoleComponent implements OnInit {
    * the write was refused, and a console that just closes the dialog looks like it
    * succeeded.
    */
-  stepUpDismissed(): void {
+  stepUpDismissed(dark = false): void {
     const pending = this.pendingStepUp();
     if (!pending) return;
     this.pendingStepUp.set(null);
-    const message =
-      `The ${pending.action} was NOT performed — it needs a fresh MFA step-up, which was not ` +
-      'completed. Nothing was changed; retry when you can confirm.';
-    if (pending.form === 'ban') this.banError.set(message);
-    else if (pending.form === 'domainLock') this.domainLockError.set(message);
-    else this.blockError.set(message);
+    // Do NOT advise a retry the deployment cannot honour. The dialog reports
+    // `dark` when every /bff/mfa/* call answered 503, i.e. app.casdoor.mfa.enabled
+    // is off; in a deployment with enforce-sensitive-writes=true and that flag off
+    // (mod-bff's own README warns they must be flipped together) no retry from
+    // this console can EVER succeed, so the moderator is told to escalate instead.
+    const message = dark
+      ? `The ${pending.action} was NOT performed — it needs an MFA step-up, but two-factor ` +
+        'authentication is not enabled on this deployment, so it cannot be confirmed here. ' +
+        'Nothing was changed; ask an administrator to enable it.'
+      : `The ${pending.action} was NOT performed — it needs a fresh MFA step-up, which was not ` +
+        'completed. Nothing was changed; retry when you can confirm.';
+    this.setFormError(pending.form, message);
   }
 
   /**

@@ -83,13 +83,29 @@ describe('MfaStepUpDialogComponent', () => {
     expect(el('mfa-stepup-submit')).toBeNull();
   });
 
-  it('emits dismissed on cancel and keeps no typed code behind', () => {
+  it('emits dismissed(false) on a plain cancel and keeps no typed code behind', () => {
     const dismissed = jasmine.createSpy('dismissed');
     component.dismissed.subscribe(dismissed);
     component.code = '123456';
     component.cancel();
-    expect(dismissed).toHaveBeenCalledTimes(1);
+    expect(dismissed).toHaveBeenCalledOnceWith(false);
     expect(component.code).toBe('');
+  });
+
+  /*
+   * The caller cannot see this component's state, and "you cancelled, retry when
+   * ready" is WRONG advice in a deployment with MFA switched off. So the close
+   * that follows a 503 has to be distinguishable from a real cancel.
+   */
+  it('emits dismissed(true) when the dialog closes after a ships-dark 503', async () => {
+    const dismissed = jasmine.createSpy('dismissed');
+    component.dismissed.subscribe(dismissed);
+    mfa.challenge.and.resolveTo({ ok: false, dark: true, status: 503 });
+    component.code = '123456';
+    await component.submitCode();
+    expect(component.dark()).toBeTrue();
+    component.cancel();
+    expect(dismissed).toHaveBeenCalledOnceWith(true);
   });
 
   it('clears a stale code and error when the method changes', () => {
