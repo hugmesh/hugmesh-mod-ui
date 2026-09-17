@@ -182,11 +182,20 @@ describe('mod-write-error', () => {
       expect(text).not.toContain('The server said');
     });
 
-    it('announces the step-up signal and that this console cannot satisfy it yet', () => {
+    /**
+     * The clause names the signal and STOPS. It used to add "this console cannot
+     * complete a step-up yet", which hugmesh-mod-ui#1 falsified for ban /
+     * domain-lock / block by wiring an inline challenge dialog in front of them —
+     * while this function is still shared with refer / recommend /
+     * resolve-finding, which have no dialog. Whether a retry is possible is the
+     * caller's fact, not this function's.
+     */
+    it('announces the step-up signal without claiming anything about a retry', () => {
       const e = new ModWriteError('x', 403, 'Forbidden', null, null, 'X-ModBan-StepUp');
       const text = describeWriteFailure(e, 'ban', hint);
       expect(text).toContain(`${STEP_UP_SIGNAL_HEADER}: X-ModBan-StepUp`);
-      expect(text).toContain('cannot complete a step-up yet');
+      expect(text).not.toContain('cannot complete a step-up yet');
+      expect(text).not.toContain('cannot be retried');
     });
 
     it('warns that a 5xx may still have applied', () => {
