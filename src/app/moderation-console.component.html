@@ -357,8 +357,8 @@
   <form (ngSubmit)="block()" aria-labelledby="mc-block-heading" aria-describedby="mc-block-intro" novalidate>
     <p class="intro" id="mc-block-intro">
       Apply a server-wide block on Matrix or Mastodon, against a single user or a whole
-      remote instance. This calls the platform's homeserver admin and is always recorded
-      in the audit trail below.
+      remote instance. The mechanism differs by platform and scope — see the note below
+      the platform/scope pickers — and it is always recorded in the audit trail below.
     </p>
 
     <label for="mc-platform">Platform</label>
@@ -375,6 +375,28 @@
     </select>
     <span id="mc-scope-help" class="field-help" data-testid="mc-scope-help">
       "user" blocks one account; "instance" blocks an entire remote server and everyone on it.
+    </span>
+
+    <!-- Decisions 50/51 (2026-09-18): Matrix's two scopes no longer behave like a plain
+         "calls the homeserver, done" control — say so BEFORE submit, not only in the
+         post-submit note, so the picker doesn't read as offering an immediate effect. -->
+    <span
+      *ngIf="platform === 'matrix' && scope === 'user'"
+      id="mc-matrix-user-help"
+      class="field-help"
+      data-testid="mc-matrix-user-help"
+    >
+      Matrix user block is applied as a REVERSIBLE local-only lock, not the homeserver's
+      one-way deactivate — undo it with "Remove lock" in Domain-lock above.
+    </span>
+    <span
+      *ngIf="platform === 'matrix' && scope === 'instance'"
+      id="mc-matrix-instance-help"
+      class="field-help"
+      data-testid="mc-matrix-instance-help"
+    >
+      Matrix has no live instance-block command: this records a REQUEST, applied by an
+      administrator — not an immediate block.
     </span>
 
     <label for="mc-target">Target</label>
