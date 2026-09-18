@@ -73,8 +73,11 @@ interface PendingStepUp {
  *    ttlSeconds (blank = permanent), 202 pending-reconcile;
  *  - a DOMAIN-LOCK add/remove form (POST/DELETE /bff/mod/domain-lock/{role}/{user})
  *    — force a user local-only (additive marker), 202 pending-reconcile;
- *  - a server-wide BLOCK form (POST /bff/mod/block) — the Matrix (tuwunel) leg
- *    is permanently STUBBED (no admin REST API exists), the Mastodon (akkoma)
+ *  - a server-wide BLOCK form (POST /bff/mod/block) — mechanism differs by
+ *    platform/scope (operator decisions 50/51, 2026-09-18): Matrix user-block is a
+ *    REVERSIBLE local-only lock (not the homeserver's one-way deactivate — undo via
+ *    the Domain-lock form's "Remove lock"), Matrix instance-block has no live verb
+ *    so it records a REQUEST applied by an administrator, and the Mastodon (akkoma)
  *    leg is WIRED to real pleroma-admin verbs but ships dark by default; always
  *    locally audited either way;
  *  - the local mod-action AUDIT trail (GET /bff/mod/audit).

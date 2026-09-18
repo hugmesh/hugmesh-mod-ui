@@ -231,6 +231,43 @@ describe('ModerationConsoleComponent', () => {
       await component.block();
       expect(component.blockError()).toContain('HTTP 502');
     });
+
+    // Decisions 50/51 (2026-09-18): the static pre-submit copy must not read as
+    // offering an immediate effect for either Matrix scope — see moderation-console
+    // .component.html's mc-matrix-user-help / mc-matrix-instance-help.
+    describe('Matrix-specific pre-submit wording (decisions 50/51)', () => {
+      const help = (testId: string): string | null =>
+        (fixture.nativeElement as HTMLElement).querySelector(`[data-testid="${testId}"]`)?.textContent ?? null;
+
+      it('explains the reversible local-only lock for platform=matrix scope=user', () => {
+        component.platform = 'matrix';
+        component.scope = 'user';
+        fixture.detectChanges();
+        const text = help('mc-matrix-user-help');
+        expect(text).not.toBeNull();
+        expect(text).toContain('REVERSIBLE');
+        expect(help('mc-matrix-instance-help')).toBeNull();
+      });
+
+      it('explains the recorded request for platform=matrix scope=instance', () => {
+        component.platform = 'matrix';
+        component.scope = 'instance';
+        fixture.detectChanges();
+        const text = help('mc-matrix-instance-help');
+        expect(text).not.toBeNull();
+        expect(text).toContain('REQUEST');
+        expect(text).toContain('administrator');
+        expect(help('mc-matrix-user-help')).toBeNull();
+      });
+
+      it('shows neither Matrix-specific note for platform=mastodon', () => {
+        component.platform = 'mastodon';
+        component.scope = 'user';
+        fixture.detectChanges();
+        expect(help('mc-matrix-user-help')).toBeNull();
+        expect(help('mc-matrix-instance-help')).toBeNull();
+      });
+    });
   });
 
   describe('accessibility', () => {
