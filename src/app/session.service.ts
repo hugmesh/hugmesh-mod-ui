@@ -34,9 +34,11 @@ export interface SnapSession {
  * `bff_` cookie — they never reach the browser. See {@link authInterceptor}
  * for how the cookie is attached to outgoing requests.
  *
- * This is the canonical HugMesh SessionService (copied verbatim in each
- * native-federation remote because the federation runtime forbids shared singletons
- * across remote boundaries). Every copy reads/writes the SAME `hug.session`
+ * This is the canonical HugMesh SessionService (its session plumbing is copied in
+ * each native-federation remote because the federation runtime forbids shared
+ * singletons across remote boundaries; the derived role-tier signals are NOT
+ * guaranteed identical across copies — this remote's {@link isMod} admits
+ * `'superadmin'` since decision 100, which not every copy does). Every copy reads/writes the SAME `hug.session`
  * localStorage key and dispatches/listens for the SAME `hug-session-change`
  * broadcast so all in-page instances (host shell + every loaded remote) stay in
  * sync without a round-trip to the server.
