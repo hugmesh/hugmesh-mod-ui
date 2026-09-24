@@ -14,21 +14,29 @@
 #     a real emitter.
 #
 # WHY A MOCK. app.mfa.enforce-sensitive-writes and app.casdoor.mfa.enabled both
-# default false, so a real stack never emits the refusal — the armed-stack
-# variant is mfa-step-up-writes.feature, skip-loudly gated on MFA_STEPUP_ARMED.
-# Here page.route() answers the three write endpoints and /bff/mfa/challenge with
+# default false, so a real stack never emits the refusal. An ARMED-stack variant
+# (a real mod-bff refusal, skip-loudly gated on MFA_STEPUP_ARMED) was drafted by a
+# separate services lane but is on no branch of this repo as of 2026-09-23 — this
+# file does not depend on it. Here page.route() answers the three write endpoints and /bff/mfa/challenge with
 # the exact wire shapes the BFF documents, so the CLIENT half of the loop —
 # recognise the signal, pause the write, retry the identical snapshot exactly
 # once, report honestly when nothing was changed — is proven on the stack we
 # have. A BARE 403 (the privileged-target / self / cross-tenant rule on these same
 # endpoints) must NEVER pop the challenge; that negative is asserted, not assumed.
 #
-# Dialog locators accept BOTH the inline port's `mfa-stepup-*` testids and
-# login-ui's federated `mfa-challenge-*` ones (login-ui d0c13c1, `./mfa-step-up`):
-# issue #1's remaining box (generator#347 decisions 21/35) swaps the former for
-# the latter, and these scenarios must stay true across that landing rather than
-# go red on a rename. Completing a REAL challenge is not scripted (no persona
-# carries a TOTP secret); the challenge endpoint is mocked to accept.
+# Dialog locators in the LOOP rows accept BOTH the inline port's `mfa-stepup-*`
+# testids and login-ui's federated `mfa-challenge-*` ones (login-ui PR #24,
+# `./mfa-step-up`), so the loop contract stays true across issue #1's remaining
+# box. That tolerance means those rows cannot tell whether the box is done, so
+# two `@fixme` rows at the end pin the box itself (generator#347 decisions 21/35,
+# operator 2026-09-17): the console must load `./mfa-step-up` from the HARDCODED
+# `/login/remoteEntry.json` in place — asserted with ONLY `mfa-challenge-*`
+# testids, which today's inline dialog does not render — and, when that load is
+# rejected, degrade to a `/login/mfa/challenge?returnTo=` link, which does not
+# exist here today. Both turn green, unmodified, the day the box merges. The
+# federated component makes no /bff/mfa call on mount, so it renders even while
+# MFA ships dark. Completing a REAL challenge is not scripted (no persona carries
+# a TOTP secret); the challenge endpoint is mocked to accept.
 #
 # @cluster: the host shell must serve this remote. A seeded session primes the
 # modGuard; the writes and the MFA surface are mocked, so no bff_ cookie is
@@ -103,3 +111,23 @@ Feature: The step-up loop on sensitive moderation writes, against the documented
     When "mod-domain-a" closes the dark step-up notice
     Then the "ban" write has been sent exactly once so far
     And "mod-domain-a" sees the "ban" form report that nothing was changed
+
+  @fixme
+  Scenario: the step-up refusal loads login-ui's federated challenge in place
+    Given "mod-domain-a" has a seeded session
+    And the mod-bff will refuse the next "ban" write demanding a step-up
+    When "mod-domain-a" navigates to "/mod/console"
+    And "mod-domain-a" bans "plain-user" on "matrix"
+    Then the console of "mod-domain-a" requested the login remote entry "/login/remoteEntry.json"
+    And "mod-domain-a" sees the federated login-ui MFA challenge in place
+    And the "ban" write has been sent exactly once so far
+
+  @fixme
+  Scenario: when the login remote entry cannot be fetched, the refusal degrades to the returnTo link
+    Given "mod-domain-a" has a seeded session
+    And the login remote entry cannot be fetched by "mod-domain-a"
+    And the mod-bff will refuse the next "ban" write demanding a step-up
+    When "mod-domain-a" navigates to "/mod/console"
+    And "mod-domain-a" bans "plain-user" on "matrix"
+    Then "mod-domain-a" is offered a link to the platform MFA challenge returning to "/mod/console"
+    And the "ban" write has been sent exactly once so far

@@ -73,6 +73,10 @@ async function mockWrite(
   first: (route: Route) => Promise<void>,
 ): Promise<void> {
   const page = pageOf(username);
+  // Every scenario that mocks a write also records the decision-35 load; the
+  // map is per scenario (cleared below) and the listener per page.
+  loginEntryRequests.delete(username);
+  watchLoginEntry(username);
   sent.set(kind, []);
   await page.route(WRITES[kind].glob, async (route) => {
     const req = route.request();
@@ -82,6 +86,20 @@ async function mockWrite(
     if (log.length === 1) return first(route);
     const { status, body } = WRITES[kind].accepted;
     return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+}
+
+/** Requests each persona's page made for login-ui's remote entry — the oracle
+ *  for issue #1's remaining box (decision 35: ONE hardcoded path). */
+const loginEntryRequests = new Map<string, string[]>();
+
+function watchLoginEntry(username: string): void {
+  if (loginEntryRequests.has(username)) return;
+  loginEntryRequests.set(username, []);
+  pageOf(username).on('request', (req) => {
+    if (new URL(req.url()).pathname === '/login/remoteEntry.json') {
+      loginEntryRequests.get(username)?.push(req.url());
+    }
   });
 }
 
@@ -131,6 +149,12 @@ Given('the MFA surface answers dark', async ({}) => {
   await pageOf(username).route('**/bff/mfa/**', (route) =>
     route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'MFA is not enabled' }) }),
   );
+});
+
+Given('the login remote entry cannot be fetched by {string}', async ({ user }, username: string) => {
+  // The decided fallback context (decision 35): login-ui cannot be reached — a
+  // moved manifest row, the standalone dev shell, a network error.
+  await pageOf(user(username).username).route('**/login/remoteEntry.json', (route) => route.abort('failed'));
 });
 
 // ── Driving the challenge ──────────────────────────────────────────────────
@@ -208,3 +232,38 @@ Then('{string} sees the {string} form report that nothing was changed', async ({
   await expect(err).toContainText(/was NOT performed/);
   await expect(err).toContainText(/Nothing was changed/);
 });
+
+// ── Issue #1's remaining box: the decision-21/35 federated consumer ─────────
+
+Then('the console of {string} requested the login remote entry {string}', async ({ user }, username: string, path: string) => {
+  // Decision 35 = A: ONE hardcoded path, not discovered, not configured.
+  expect(path).toBe('/login/remoteEntry.json');
+  const u = user(username).username;
+  await expect
+    .poll(() => (loginEntryRequests.get(u) ?? []).length, {
+      message: `the console never requested ${path} after the step-up refusal`,
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0);
+});
+
+Then('{string} sees the federated login-ui MFA challenge in place', async ({ user }, username: string) => {
+  // ONLY login-ui's `mfa-challenge-*` testids (its exposed MfaStepUpComponent),
+  // never the inline port's `mfa-stepup-*`, so today's dialog cannot pass this.
+  const page = pageOf(user(username).username);
+  await expect(page.locator('[data-testid="mfa-challenge-view"]')).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator('[data-testid="mfa-challenge-intro"]')).toBeVisible();
+  await expect(page).toHaveURL(/\/mod\/console/);
+});
+
+Then('{string} is offered a link to the platform MFA challenge returning to {string}',
+  async ({ user }, username: string, returnPath: string) => {
+    // The decided permanent fallback: /login/mfa/challenge?returnTo=<current url>.
+    const page = pageOf(user(username).username);
+    const link = page.locator('a[href*="/login/mfa/challenge"]');
+    await expect(link.first()).toBeVisible({ timeout: 15_000 });
+    const href = (await link.first().getAttribute('href')) ?? '';
+    expect(href).toContain('returnTo=');
+    const returnTo = new URL(href, 'https://placeholder.invalid').searchParams.get('returnTo') ?? '';
+    expect(returnTo).toContain(returnPath);
+  });
