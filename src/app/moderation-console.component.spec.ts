@@ -1,5 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { signal } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { provideLocationMocks } from '@angular/common/testing';
 import { BehaviorSubject } from 'rxjs';
 import { ModerationConsoleComponent } from './moderation-console.component';
 import {
@@ -123,6 +125,11 @@ describe('ModerationConsoleComponent', () => {
         { provide: AdminBffService, useValue: admin },
         { provide: SessionService, useValue: { isAdmin } },
         { provide: MfaService, useValue: mfa },
+        // The block result links to its moderation request with a RELATIVE RouterLink
+        // (decision 84d), so the console now needs a router in scope.
+        provideRouter([]),
+        // Following that link must not pushState the real karma page.
+        provideLocationMocks(),
       ],
     }).compileComponents();
     fixture = TestBed.createComponent(ModerationConsoleComponent);
@@ -230,6 +237,160 @@ describe('ModerationConsoleComponent', () => {
       component.target = '@x:y';
       await component.block();
       expect(component.blockError()).toContain('HTTP 502');
+    });
+
+    // Decision 84d = A (operator, 2026-09-23, hugmesh-federation-api#7): mod-bff's block
+    // body carries a dedicated moderationRequestId (null when no row exists) and, on a
+    // Matrix INSTANCE block, a federation {status, moderationRequestId, requestStatus,
+    // httpStatus?} object (hugmesh-mod-bff-api#25, merged 8b32057). The console must
+    // LINK to that request in the queue and say the federation status plainly, never
+    // make the moderator dig the id out of the prose note.
+    describe('federation moderation request link + status (decision 84d)', () => {
+      const q = <T extends Element = HTMLElement>(sel: string): T | null =>
+        (fixture.nativeElement as HTMLElement).querySelector<T>(sel);
+      const filed: BlockResult = {
+        state: 'pending-reconcile',
+        external: 'requested:no-tuwunel-verb',
+        blocked: action,
+        moderationRequestId: 42,
+        federation: { status: 'filed', moderationRequestId: 42, requestStatus: 'referred' },
+        note: 'Matrix has no instance-block verb. Filed federation moderation request #42 and referred it.',
+      };
+
+      async function blockWith(result: BlockResult | ModWriteResult<BlockResult>): Promise<void> {
+        bff.block.and.resolveTo('ok' in result ? result : ok(result));
+        fixture.detectChanges();
+        component.platform = 'matrix';
+        component.scope = 'instance';
+        component.target = 'evil.example';
+        await component.block();
+        fixture.detectChanges();
+      }
+
+      it('links a filed request to its row in the moderation queue', async () => {
+        await blockWith(filed);
+        const link = q<HTMLAnchorElement>('[data-testid="mc-block-request-link"]');
+        expect(link).withContext('a link to the filed request').not.toBeNull();
+        expect(link!.tagName).toBe('A');
+        expect(link!.getAttribute('href')).toContain('#mc-request-42');
+        expect(link!.textContent).toContain('#42');
+      });
+
+      it('shows the federation status and the request status plainly', async () => {
+        await blockWith(filed);
+        const fed = q('[data-testid="mc-block-federation"]');
+        expect(fed).not.toBeNull();
+        expect(fed!.textContent).toContain('filed');
+        expect(fed!.textContent).toContain('referred');
+        expect(fed!.getAttribute('role')).toBe('status');
+      });
+
+      it('reloads the moderation queue so the linked row is actually there', async () => {
+        fixture.detectChanges();
+        bff.loadModeration.calls.reset();
+        component.statusFilter = 'referred';
+        await blockWith(filed);
+        expect(bff.loadModeration).toHaveBeenCalledOnceWith('referred');
+      });
+
+      it('gives every queue row an anchor id the link can land on', () => {
+        moderation$.next([{ ...request, id: 42, status: 'referred' }]);
+        fixture.detectChanges();
+        const row = q('#mc-request-42');
+        expect(row).not.toBeNull();
+        expect(row!.getAttribute('data-request-id')).toBe('42');
+        expect(row!.getAttribute('tabindex')).toBe('-1');
+      });
+
+      it('following the link focuses and highlights that queue row', async () => {
+        await blockWith(filed);
+        moderation$.next([request, { ...request, id: 42, status: 'referred' }]);
+        fixture.detectChanges();
+        q<HTMLAnchorElement>('[data-testid="mc-block-request-link"]')!.click();
+        await fixture.whenStable();
+        fixture.detectChanges();
+        const row = q('#mc-request-42')!;
+        expect(document.activeElement).toBe(row);
+        expect(row.classList).toContain('mc-row-highlight');
+        expect(q('#mc-request-7')!.classList).not.toContain('mc-row-highlight');
+      });
+
+      it('widens the queue filter to "all" when the linked row is filtered out', async () => {
+        await blockWith(filed);
+        // The current filter shows only 'approved' rows: the referred request is not rendered.
+        component.statusFilter = 'approved';
+        moderation$.next([{ ...request, status: 'approved' }]);
+        bff.loadModeration.calls.reset();
+        bff.loadModeration.and.callFake(async () => {
+          const rows = [{ ...request, id: 42, status: 'referred' }];
+          moderation$.next(rows);
+          return rows;
+        });
+        fixture.detectChanges();
+        await component.revealRequest(42);
+        fixture.detectChanges();
+        expect(component.statusFilter).toBe('');
+        expect(bff.loadModeration).toHaveBeenCalledOnceWith(undefined);
+        expect(q('#mc-request-42')).not.toBeNull();
+      });
+
+      it('says plainly when the request is still not in this moderator\'s queue', async () => {
+        await blockWith(filed);
+        moderation$.next([]);
+        bff.loadModeration.and.resolveTo([]);
+        await component.revealRequest(42);
+        fixture.detectChanges();
+        expect(q('[data-testid="mc-block-request-missing"]')?.textContent).toContain('#42');
+      });
+
+      it('announces an UNAUTHORIZED federation leg as an alert, with no link when nothing was filed', async () => {
+        await blockWith({
+          ...filed,
+          moderationRequestId: null,
+          federation: { status: 'unauthorized', moderationRequestId: null, requestStatus: null, httpStatus: 401 },
+          note: 'The federation moderation request was NOT filed: federation-api rejected your sign-in token (401).',
+        });
+        const fed = q('[data-testid="mc-block-federation"]');
+        expect(fed).not.toBeNull();
+        expect(fed!.textContent).toContain('unauthorized');
+        expect(fed!.textContent).toContain('NOT filed');
+        expect(fed!.getAttribute('role')).toBe('alert');
+        expect(q('[data-testid="mc-block-request-link"]')).toBeNull();
+      });
+
+      it('still links a request that was created before an unauthorized refer', async () => {
+        await blockWith({
+          ...filed,
+          moderationRequestId: 43,
+          federation: { status: 'unauthorized', moderationRequestId: 43, requestStatus: 'recommended', httpStatus: 401 },
+        });
+        expect(q('[data-testid="mc-block-federation"]')!.textContent).toContain('unauthorized');
+        expect(q('[data-testid="mc-block-request-link"]')!.getAttribute('href')).toContain('#mc-request-43');
+      });
+
+      it('renders neither the link nor a federation line for a block with no federation leg', async () => {
+        fixture.detectChanges();
+        bff.loadModeration.calls.reset();
+        await blockWith({ state: 'pending-reconcile', blocked: action, external: 'stubbed', moderationRequestId: null });
+        expect(q('[data-testid="mc-block-request-link"]')).toBeNull();
+        expect(q('[data-testid="mc-block-federation"]')).toBeNull();
+        expect(bff.loadModeration).not.toHaveBeenCalled();
+      });
+
+      it('clears the previous link and federation line when the next block FAILS', async () => {
+        await blockWith(filed);
+        expect(q('[data-testid="mc-block-request-link"]')).not.toBeNull();
+        await blockWith(failed<BlockResult>(502, 'Bad Gateway'));
+        expect(q('[data-testid="mc-block-request-link"]')).toBeNull();
+        expect(q('[data-testid="mc-block-federation"]')).toBeNull();
+      });
+
+      it('clears the previous link when the next block files nothing', async () => {
+        await blockWith(filed);
+        expect(q('[data-testid="mc-block-request-link"]')).not.toBeNull();
+        await blockWith({ blocked: action, external: 'stubbed', moderationRequestId: null });
+        expect(q('[data-testid="mc-block-request-link"]')).toBeNull();
+      });
     });
 
     // Decisions 50/51 (2026-09-18): the static pre-submit copy must not read as

@@ -1,5 +1,7 @@
 import { TestBed } from '@angular/core/testing';
+import { Router, UrlTree } from '@angular/router';
 import { SessionService, SnapSession } from './session.service';
+import { modGuard } from './mod.guard';
 
 function makeSession(over: Partial<SnapSession> = {}): SnapSession {
   return {
@@ -38,6 +40,42 @@ describe('SessionService', () => {
     expect(service.isMod()).toBeTrue();
     service.set(makeSession({ roles: ['admin'] }));
     expect(service.isMod()).withContext('admin inherits the mod surface').toBeTrue();
+  });
+
+  // Decision 100 = A (operator, 2026-09-23, hugmesh-generator#522): a SUPERADMIN-only
+  // account is a moderator for this remote, exactly as the host shell's isMod() and
+  // mod-bff's SecurityConfig (/bff/mod/** -> MOD|ADMIN|SUPERADMIN, SUPERADMIN > ADMIN,
+  // MOD in its role hierarchy) already say. Without it the shell shows the Moderation
+  // entry and this remote's guard then bounces the same person to /login.
+  it('isMod is true for a superadmin-only session (decision 100)', () => {
+    service.set(makeSession({ roles: ['superadmin'] }));
+    expect(service.isMod()).withContext('superadmin-only inherits the mod surface').toBeTrue();
+    service.set(makeSession({ roles: ['user', 'superadmin'] }));
+    expect(service.isMod()).toBeTrue();
+  });
+
+  it('the REAL modGuard admits a superadmin-only session and still bounces a plain user', () => {
+    // Done-when for decision 100: the guard itself (not a mocked isMod) lets a
+    // superadmin-only account into /mod instead of sending it to /login.
+    const parseUrl = jasmine.createSpy('parseUrl').and.callFake((u: string) => ({ url: u }) as unknown as UrlTree);
+    TestBed.resetTestingModule();
+    TestBed.configureTestingModule({ providers: [SessionService, { provide: Router, useValue: { parseUrl } }] });
+    const real = TestBed.inject(SessionService);
+    const guard = () => TestBed.runInInjectionContext(() => modGuard(null as never, null as never));
+
+    real.set(makeSession({ roles: ['superadmin'] }));
+    expect(guard()).toBeTrue();
+    expect(parseUrl).not.toHaveBeenCalled();
+
+    real.set(makeSession({ roles: ['user'] }));
+    expect((guard() as unknown as { url: string }).url).toBe('/login');
+  });
+
+  it('isMod stays false for roles that merely CONTAIN a tier word', () => {
+    // Exact-slug match, not a substring: a 'superadmin-pending' or 'moderator-applicant'
+    // slug must not open the console.
+    service.set(makeSession({ roles: ['user', 'superadmin-pending', 'moderator-applicant', 'games'] }));
+    expect(service.isMod()).toBeFalse();
   });
 
   it('hydrates an existing session from localStorage on construction', () => {
