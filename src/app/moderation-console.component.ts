@@ -1,9 +1,11 @@
-import { Component, DestroyRef, OnInit, inject, signal } from '@angular/core';
+import { ChangeDetectorRef, Component, DestroyRef, ElementRef, OnInit, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
 import {
   BanRequest,
+  BlockFederation,
   BlockRequest,
   DomainLockRole,
   ModAction,
@@ -114,7 +116,7 @@ interface PendingStepUp {
 @Component({
   selector: 'hug-moderation-console',
   standalone: true,
-  imports: [CommonModule, FormsModule, TargetTypeaheadComponent, MfaStepUpDialogComponent],
+  imports: [CommonModule, FormsModule, RouterLink, TargetTypeaheadComponent, MfaStepUpDialogComponent],
   templateUrl: './moderation-console.component.html',
   styleUrl: './moderation-console.component.scss',
 })
@@ -123,6 +125,8 @@ export class ModerationConsoleComponent implements OnInit {
   private readonly admin = inject(AdminBffService);
   private readonly session = inject(SessionService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly cdr = inject(ChangeDetectorRef);
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef);
 
   /** Drives the disabled+helptext gating of the admin-only DECIDE controls. */
   readonly isAdmin = this.session.isAdmin;
@@ -190,6 +194,18 @@ export class ModerationConsoleComponent implements OnInit {
   readonly blockError = signal('');
   /** Outcome of the last block (the STUBBED/ok/degraded note), announced politely. */
   readonly blockNote = signal('');
+  /** Decision 84d: the federation-api moderation_requests id the last block filed or
+   *  reused (mod-bff's dedicated {@code moderationRequestId} field), or null. Drives the
+   *  "view it in the queue" link — the id is NEVER scraped out of the prose note. */
+  readonly blockRequestId = signal<number | null>(null);
+  /** The federation-api leg of the last Matrix INSTANCE block, or null for every other
+   *  block. Rendered as its status word plus a plain sentence, so an 'unauthorized'
+   *  leg (decision 84b: the moderator's own token was refused) is not buried in prose. */
+  readonly blockFederation = signal<BlockFederation | null>(null);
+  /** The queue row the moderator last jumped to from a block result (highlighted). */
+  readonly highlightedRequestId = signal<number | null>(null);
+  /** Said plainly when the linked request is not in this moderator's queue view. */
+  readonly requestMissing = signal('');
 
   // ── Ban / lift form model ──────────────────────────────────────────
   readonly banPlatforms: BanRequest['platform'][] = ['matrix', 'mastodon', 'profile'];
@@ -316,8 +332,12 @@ export class ModerationConsoleComponent implements OnInit {
 
   // ── Server-wide block ──────────────────────────────────────────────
   async block(): Promise<void> {
-    // Drop any stale success note (see recommend()).
+    // Drop any stale success note (see recommend()) — and the previous block's
+    // request link / federation line, which would otherwise read as this block's.
     this.blockNote.set('');
+    this.blockRequestId.set(null);
+    this.blockFederation.set(null);
+    this.requestMissing.set('');
     if (!this.target.trim()) {
       this.blockError.set('A target (user MXID/acct or instance domain) is required.');
       return;
@@ -340,12 +360,90 @@ export class ModerationConsoleComponent implements OnInit {
       this.blockNote.set(result.value.note ?? `Recorded. External result: ${result.value.external}.`);
       this.target = '';
       this.reason = '';
+      const id = result.value.moderationRequestId;
+      this.blockRequestId.set(typeof id === 'number' ? id : null);
+      this.blockFederation.set(result.value.federation ?? null);
+      // ModBffService.block() refreshes only the audit trail. A filed/referred request
+      // must be in the cached queue before the link to it can land anywhere.
+      if (typeof id === 'number') await this.bff.loadModeration(this.statusFilter || undefined);
     } else if (this.offerStepUp(result.error, 'block', 'block', () => this.submitBlock(req))) {
       // offerStepUp owns this form's error line in the step-up case — it CLEARS it
       // when the dialog opens and WRITES it when it refuses a second challenge.
     } else {
       this.blockError.set(describeWriteFailure(result.error, 'block', FORBIDDEN_HINT));
     }
+  }
+
+  /** True when the federation leg did NOT reach administrators (announced as an alert). */
+  federationFailed(f: BlockFederation): boolean {
+    return f.status === 'unauthorized' || f.status === 'error' || f.status === 'not-configured';
+  }
+
+  /**
+   * The plain sentence for a block's federation-api leg (decisions 84a-d). The status
+   * word itself is rendered verbatim beside it; this says what it MEANS. It is derived
+   * from the structured fields only — the prose {@code note} is never parsed.
+   */
+  federationMessage(f: BlockFederation): string {
+    const id = f.moderationRequestId;
+    const http = typeof f.httpStatus === 'number' ? `HTTP ${f.httpStatus}` : null;
+    switch (f.status) {
+      case 'filed':
+        return `request #${id} was filed and referred to administrators for a decision.`;
+      case 'referred-existing':
+        return `an open recommendation for this domain already existed (#${id}); it has now been referred to administrators.`;
+      case 'existing':
+        return `request #${id} for this domain was already referred to administrators; nothing new was filed.`;
+      case 'unauthorized':
+        return (
+          (id === null
+            ? 'the request was NOT filed'
+            : `request #${id} was created but NOT referred to administrators`) +
+          ` — federation-api refused your sign-in (${http ?? 'HTTP 401'}). This happens for a moderator ` +
+          'signed in through the platform\'s own login when the Casdoor token exchange failed or is ' +
+          'switched off. The block itself is still recorded in the audit trail.'
+        );
+      case 'error':
+        return (
+          `the federation request could not be completed (${http ?? 'federation-api unreachable or timed out'})` +
+          (id === null ? '; nothing was filed.' : `; request #${id} exists but was NOT referred.`) +
+          ' The block itself is still recorded in the audit trail.'
+        );
+      case 'not-configured':
+        return 'NOT filed — this deployment has no federation-api client configured for moderation.';
+      default:
+        return 'this console does not recognise that status; check the note above and the moderation queue.';
+    }
+  }
+
+  /**
+   * Follow a block result's link to its request in the moderation queue: make sure the
+   * row is rendered (the current status filter may hide it — widen to "all" and reload
+   * rather than silently landing nowhere), then highlight, scroll to and focus it. The
+   * RouterLink on the same anchor records the {@code #mc-request-<id>} fragment in the
+   * URL; scrolling is done HERE because the host shell owns the router's anchorScrolling.
+   */
+  async revealRequest(id: number): Promise<void> {
+    this.requestMissing.set('');
+    const present = () => this.queue().some((r) => r.id === id);
+    if (!present()) {
+      this.statusFilter = '';
+      await this.bff.loadModeration(undefined);
+    }
+    if (!present()) {
+      this.highlightedRequestId.set(null);
+      this.requestMissing.set(
+        `Request #${id} is not in your moderation queue view — it may be outside your domain, ` +
+          'or the queue could not be loaded. Reload the queue with the "all" filter to look again.',
+      );
+      return;
+    }
+    this.highlightedRequestId.set(id);
+    // Render the (possibly just reloaded) row now, so it exists to be focused.
+    this.cdr.detectChanges();
+    const row = this.host.nativeElement.querySelector<HTMLElement>(`#mc-request-${id}`);
+    row?.scrollIntoView?.({ block: 'center' });
+    row?.focus();
   }
 
   // MFA STEP-UP (hugmesh-mod-ui#1) — the UI half is WIRED but INERT.
