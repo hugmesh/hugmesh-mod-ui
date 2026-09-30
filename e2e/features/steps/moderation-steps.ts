@@ -22,7 +22,7 @@
 // shell must serve the remote; bddgen compiles them regardless.
 
 import { Locator, Page, expect } from '@playwright/test';
-import { When, Then } from '../support/fixtures';
+import { Given, When, Then } from '../support/fixtures';
 import { banRequestState, pageRegistry } from './_registry';
 
 function pageOf(username: string) {
@@ -336,4 +336,33 @@ When('{string} filters the queue by {string}', async ({ user }, username: string
 Then('{string} sees the moderation queue table', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
   await expect(page.locator('[data-testid="mc-queue"]')).toBeVisible();
+});
+
+// ── MFA step-up gate (hugmesh-mod-ui#1) ───────────────────────────────────
+// Both flags mod-bff-api needs (app.mfa.enforce-sensitive-writes and
+// app.casdoor.mfa.enabled) default OFF, so ModStepUpGate.satisfied() returns
+// true unconditionally on a plain `make stack-up`. Mirrors the SKIP-LOUDLY
+// posture gate hugmesh-generator's moderation-media.steps.ts uses for the
+// same org-wide flag pair — an unarmed stack reports WHY, never a silent pass.
+const MFA_STEPUP_ARMED = process.env.MFA_STEPUP_ARMED === '1';
+
+Given('the MFA step-up gate is armed on this stack', async ({ $testInfo }) => {
+  $testInfo.skip(
+    !MFA_STEPUP_ARMED,
+    'MFA_STEPUP_ARMED!=1 — this needs a stack with BOTH app.mfa.enforce-sensitive-writes=true '
+    + 'and app.casdoor.mfa.enabled=true on mod-bff-api/auth-core (both default false, i.e. '
+    + 'ships dark). Set MFA_STEPUP_ARMED=1 in the environment once the mesh under test carries '
+    + 'those flags.',
+  );
+});
+
+Then('{string} sees the step-up challenge dialog', async ({ user }, username: string) => {
+  const page = pageOf(user(username).username);
+  const dialog = page.locator('[data-testid="mfa-stepup-dialog"]');
+  await expect(dialog).toBeVisible();
+  // A dark deployment renders the SAME dialog testid with an honest "not
+  // enabled yet" message rather than the verify form — distinguish the two so
+  // this step cannot pass against a dark stack that merely rendered a shell.
+  await expect(page.locator('[data-testid="mfa-stepup-dark"]')).not.toBeVisible();
+  await expect(page.locator('[data-testid="mfa-stepup-intro"]')).toBeVisible();
 });
