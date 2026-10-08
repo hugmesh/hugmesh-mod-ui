@@ -16,11 +16,12 @@ this remote's exposed `MOD_ROUTES` and mounts them at **`/mod`**:
 | `/mod/console`   | Moderation console     | `ModerationConsoleComponent`  |
 | `/mod/findings`  | System-findings queue  | `FindingsPanelComponent`      |
 
-Access requires the Casdoor **MOD or ADMIN** role. The host route-guards `/mod` before federating
+Access requires the Casdoor **MOD, ADMIN or SUPERADMIN** role. The host route-guards `/mod` before federating
 this remote; the remote also ships its own standalone `modGuard` (applied as `canActivate` on all
 three `MOD_ROUTES` entries, so a standalone dev shell gets the same client-side check as the
-host-federated build), gating on `SessionService.isMod()` — true for either `mod` or `admin`,
-mirroring the backend's `hasAnyRole('MOD','ADMIN')`.
+host-federated build), gating on `SessionService.isMod()` — true for `mod`, `admin` or `superadmin`,
+mirroring the backend's chain rule `hasAnyRole("MOD","ADMIN","SUPERADMIN")` on `/bff/mod/**`
+(`SecurityConfig.java:114` in `hugmesh-mod-bff-api`) and the host shell's own `isMod()`.
 
 The backend is [`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api),
 reached same-origin at `/bff/mod/**` through the platform's front-end gateway. Every request
@@ -35,10 +36,12 @@ edge-AI image-moderation findings queue. There is deliberately **no** infrastruc
 administration, **no** direct user removal, and **no** appeal adjudication beyond an admin-only
 decide control.
 
-The console wires every endpoint the moderator backend actually exposes, and renders anything
+The console wires the moderation endpoints a moderator acts through, and renders anything
 without a backing endpoint as **disabled, with explanatory helptext** — defense in depth: the API
 is the source of truth, and the UI mirrors its gates rather than hiding controls or failing with a
-403 on click. See [The moderator surface in detail](#the-moderator-surface-in-detail) below for the
+403 on click. Not wired: `GET /bff/mod/modules` and `GET /bff/mod/status` (the generated client has
+methods for them; no view calls them) and the owncast stream actions (`hide`, `kill`, `restore`),
+which are not in the committed `openapi.json` and have no control here. See [The moderator surface in detail](#the-moderator-surface-in-detail) below for the
 full endpoint-by-endpoint breakdown.
 
 ## How it fits into HugMesh
@@ -65,7 +68,7 @@ flowchart TB
     end
 
     subgraph Backend
-        BFF["hugmesh-mod-bff-api\nre-checks MOD/ADMIN role\nper request"]
+        BFF["hugmesh-mod-bff-api\nre-checks MOD/ADMIN/SUPERADMIN role\nper request"]
         CASDOOR["Casdoor\n(IdP + role source)"]
     end
 
@@ -77,17 +80,18 @@ flowchart TB
 ```
 
 - **Host shell ([`hugmesh-host-shell`](https://github.com/hugmesh/hugmesh-host-shell))** —
-  route-guards `/mod` on the MOD/ADMIN role and calls
+  route-guards `/mod` on the MOD/ADMIN/SUPERADMIN role and calls
   `loadRemoteModule({ remoteName: 'mod', exposedModule: './routes' })` to lazy-mount `MOD_ROUTES`.
   Host and remote each hold their **own** `SessionService` over the same `hug.session`
   localStorage key, re-reading on a same-page `hug-session-change` broadcast plus cross-tab
   `storage` events.
 - **fe-gateway** — fronts this remote's pod at `/mod` (serving `remoteEntry.json` + chunks) and
   same-origin-proxies `/bff/mod/**` to the mod backend. Every request carries the HttpOnly `bff_`
-  session cookie (`withCredentials`); the gateway's `BffCookieToBearerWebFilter` swaps it for an
-  internal Bearer token server-side.
+  session cookie (`withCredentials`); the gateway's `BffCookieToBearerWebFilter` turns the
+  `bff_session` cookie into a Bearer header and `BffJwtExchangeWebFilter` swaps that for the internal
+  custody JWT, both server-side (`hugmesh-gateway`, `src/main/java/net/hugmesh/gateway/filter/`).
 - **Backend ([`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api))** —
-  the source of truth: it re-checks the MOD/ADMIN role and gates every endpoint server-side (the
+  the source of truth: it re-checks the MOD/ADMIN/SUPERADMIN role and gates every endpoint server-side (the
   UI mirrors those gates rather than trusting itself).
 - **Multi-tenancy** — this remote is **tenant-agnostic**: it holds no domain/issuer/brand code.
   Per-brand domain scoping is enforced **upstream** (the gateway and backends key off the issuer
@@ -106,9 +110,9 @@ stored in `hug.session` localStorage (`SnapSession` carries only non-secret meta
 `label`, `provider`, `roles`, `registrationComplete`). A moderator never sees their own Casdoor JWT
 or a bearer token their own JS could exfiltrate.
 
-The gateway is a pure Casdoor-JWT OAuth2 resource server: a pre-security exchange filter
-(`BffCookieToBearerWebFilter`) swaps the `bff_` cookie for the internal custody JWT so the
-gateway's JWT validation and role gate run unchanged, and authorization is data-driven by a
+The gateway is a pure Casdoor-JWT OAuth2 resource server: two pre-security filters
+(`BffCookieToBearerWebFilter`, then `BffJwtExchangeWebFilter`) swap the `bff_session` cookie for the
+internal custody JWT so the gateway's JWT validation and role gate run unchanged, and authorization is data-driven by a
 `gateway_route_access` table (ADMIN / GAME-MASTER bypass within their own domain, SUPERADMIN
 cross-domain). From this UI's perspective this is transparent: `authInterceptor` attaches
 `withCredentials` to every `HttpClient` request the generated API client makes to `/bff/mod/**`,
@@ -135,14 +139,21 @@ and the platform resolves identity and role upstream.
   one domain). Same `202 pending-reconcile` contract.
 - **Server-wide block** — `POST /bff/mod/block` (`{platform: matrix|mastodon, scope:
   user|instance, target, reason?}`). Every action is always locally audited, and the external
-  result is surfaced honestly — the two platforms differ:
-  - The **Matrix (tuwunel) leg is permanently stubbed by design**: tuwunel is Conduit-family and
-    has no HTTP admin API at all (only async `!admin` room commands, with no re-activate verb), so
-    `blockUser`/`blockInstance` always return `STUBBED`, never `OK`.
-  - The **Mastodon (akkoma) leg is wired** to real `pleroma-admin` verbs (confirmed shapes:
-    `PATCH .../users/deactivate`, `DELETE .../instances/{host}`) but ships **dark by default**
-    behind `external.mastodon.enabled` (unset ⇒ `STUBBED`, no HTTP issued); when enabled, a
-    breaker trip or non-2xx response degrades honestly to `degraded:...`, never a false `OK`.
+  result is surfaced honestly. The legs differ (`hugmesh-mod-bff-api` README, "Ban vs. block"):
+  - **Matrix user block** is a **reversible domain-lock**, not a homeserver call: the backend
+    writes the same desired-state as `domain-lock` and answers `202` with `external:
+    domain-locked`. A moderator undoes it from the domain-lock form
+    (`DELETE /bff/mod/domain-lock/ROLE_MATRIX_DOMAINLOCKED/{user}`), not from ban/lift.
+  - **Matrix instance block** records a **request**, not an effect (`requested:no-tuwunel-verb`):
+    tuwunel has no runtime per-server block verb. The backend also files it into
+    `federation-api`'s approval trail and returns `moderationRequestId` plus a `federation` leg
+    (`filed`, `referred-existing`, `existing`, `unauthorized`, `error` or `not-configured`). The
+    console shows the leg in plain words, links the request in the queue, and says when the
+    block was audited but never reached an administrator.
+  - **Mastodon (akkoma) leg** is wired to real `pleroma-admin` verbs but ships **dark by
+    default** behind `external.mastodon.enabled` (unset ⇒ `stubbed`, no HTTP issued). When
+    enabled, a real success answers `200` (`external: ok`); a breaker trip or non-2xx response
+    degrades honestly to `degraded:...` with `202`, never a false `OK`.
 - **Audit trail** — `GET /bff/mod/audit` (the local mod-action audit table), with an opt-in
   **`?mine`** toggle ("only my own actions"); default is OFF, showing the full domain-scoped trail
   (every same-tenant moderator's actions).
@@ -156,7 +167,7 @@ and the platform resolves identity and role upstream.
 service than the mod backend):
 
 - **Appeals decide (approve/deny)** — `POST /bff/admin/moderation/{id}/decide`. Shown only when
-  the caller is an admin (a moderator never decides directly — only escalates via refer, and sees
+  the caller holds the `admin` role (a moderator never decides directly — only escalates via refer, and sees
   the control disabled with helptext instead). A failed or degraded decide is surfaced honestly and
   never renders the row as decided.
 
@@ -169,6 +180,11 @@ service than the mod backend):
 
 These controls use `aria-disabled` (not native `disabled`) so they stay keyboard-focusable, and a
 screen reader reads the `aria-describedby` helptext explaining **why**.
+
+**Target suggestions:** the target fields offer a typeahead (`TargetTypeaheadComponent`,
+`ModDirectoryService`) built from what mod-bff already returned to the moderator: the findings
+queue, the moderation queue and the audit trail. A moderator cannot search users directly, because
+the admin-bff gates all of `/bff/admin/**` on ADMIN/SUPERADMIN.
 
 **Accessibility and messaging:** a queue target shown by name is announced via the shared
 `accessibleName()` helper (the ASCII `screenReaderName` when present, degrading to the display name
@@ -235,9 +251,10 @@ prerequisite for the MFA step-up port (see Roadmap, and #14 / #1).
 
 Two distinct write patterns live in this console. The escalation chain (recommend → refer →
 decide) is a synchronous request/response all the way through, ending in an admin's explicit
-approve/deny. The access-control writes (ban/lift, domain-lock, server-wide block) are always an
-asynchronous `202-pending-reconcile`, applied later by the backend's single-writer reconcile loop —
-this UI never claims a synchronous success for those:
+approve/deny. The access-control writes (ban/lift, domain-lock) are always an asynchronous
+`202-pending-reconcile`, applied later by the backend's single-writer reconcile loop. The
+server-wide block is `202` unless the homeserver call really landed (only the Mastodon leg can).
+This UI never claims a synchronous success for any of them:
 
 ```mermaid
 sequenceDiagram
@@ -246,10 +263,12 @@ sequenceDiagram
     actor A as Admin (admin console)
     participant MB as mod-bff-api
     participant AB as admin-bff-api
+    participant UB as user-bff-api
     participant F as federation-api
 
     Note over U,F: Escalation chain (recommend -> refer -> decide)
-    U->>MB: POST /bff/mod/moderation (self-service recommend-instance-block)
+    U->>UB: POST /bff/user/recommend-instance-block
+    UB->>F: record recommendation
     M->>MB: POST /bff/mod/moderation (mod recommend)
     MB->>F: record recommendation
     F-->>MB: status recommended
@@ -261,7 +280,7 @@ sequenceDiagram
     F-->>AB: status approved or denied
     AB-->>A: decision result
 
-    Note over M,MB: Ban / domain-lock / server-wide block are a SEPARATE,<br/>always-async desired-state write - never routed through decide
+    Note over M,MB: Ban / domain-lock / server-wide block are a SEPARATE,<br/>desired-state write - never routed through decide
     M->>MB: POST or DELETE /bff/mod/ban platform target ttlSeconds
     MB-->>M: 202 pending-reconcile envelope
     Note over MB: single-writer reconcile loop applies the effect asynchronously
@@ -308,7 +327,7 @@ lazy-load `MOD_ROUTES` at runtime.
 
 ### Prerequisites
 
-- Node.js >= 24.15 (Angular CLI 22 requirement)
+- Node.js `^22.22.3`, `^24.15.0` or `>=26` (the Angular CLI 22 `engines` range; the `Dockerfile` and CI use Node 24)
 - A reachable `hugmesh-mod-bff-api` instance for anything beyond the standalone client-side checks
   (see [Develop](#develop) below)
 
@@ -360,15 +379,31 @@ cluster required) versus against a live stack.
 
 ## Deployment & CI
 
-`Dockerfile` builds the remote and serves `dist/mod/browser` via nginx with
-`Access-Control-Allow-Origin "*"` (so a host shell can fetch `remoteEntry.json` and chunks
-cross-origin) and an SPA fallback to `/index.html`; `GET /healthz` returns `200`. `nginx.conf` also
-emits a baseline set of defense-in-depth security headers on every response, including error
-responses: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
-`Referrer-Policy: strict-origin-when-cross-origin`, and `Strict-Transport-Security`
-(`max-age=31536000; includeSubDomains`). These are safe defaults for an Angular SPA plus
-module-federation remotes plus OAuth redirect flows; a stricter `Content-Security-Policy` /
-COEP-CORP / `Permissions-Policy` set needs per-deployment tuning and is left to the operator.
+`Dockerfile` builds the remote with `--base-href=/mod/` (it is served under `/mod/` behind the
+gateway; without the flag asset URLs resolve against the gateway root and the page renders blank)
+and serves `dist/mod/browser` via nginx on port 80. `nginx.conf` sets:
+
+- `Access-Control-Allow-Origin "*"` on the app location, so a host shell can fetch
+  `remoteEntry.json` and chunks cross-origin, and an SPA fallback to `/index.html`;
+- `GET /healthz` returns `200` with body `ok`;
+- baseline security headers, including on error responses: `X-Content-Type-Options: nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, and
+  `Strict-Transport-Security` (`max-age=31536000; includeSubDomains`). The two theme stylesheets
+  carry the first three but not HSTS;
+- a **nonce-based `Content-Security-Policy`** on the app location. nginx mints a nonce per request
+  (`$request_id`) and `sub_filter` writes it into every `<script>` of `index.html`. `script-src` is
+  `'self' 'nonce-…' blob:` (no `unsafe-inline` for scripts; `blob:` is for es-module-shims), and
+  `connect-src 'self' blob:`, `frame-src 'none'`, `object-src 'none'`, `base-uri 'self'` and
+  `frame-ancestors 'none'` close the rest. The policy exists because the gateway applies a bare
+  `script-src 'self'` fallback to any response without its own CSP, which blanks the page.
+
+COEP/CORP and `Permissions-Policy` are not set; they need per-deployment tuning and are left to
+the operator.
+
+Theme: at container start `docker-entrypoint.d/50-hug-theme.sh` writes `HUG_THEME_CSS` (else
+`SNAP_THEME_CSS`) verbatim to `/tmp/hug-theme.css` (and `/tmp/snap-theme.css`, kept for older
+documents). nginx serves both with `Cache-Control: no-store`. Unset means an empty stylesheet and
+the shipped brand.
 
 The primary pipeline is GitLab CI (`.gitlab-ci.yml`), with four stages:
 
@@ -390,7 +425,8 @@ The primary pipeline is GitLab CI (`.gitlab-ci.yml`), with four stages:
   requests, so a finding surfaces in the MR widget without breaking the pipeline.
 
 A manual-dispatch GitHub Actions workflow (`.github/workflows/release.yml`) is also available to
-build and publish the image to GHCR (`ghcr.io/hugmesh/hugmesh-mod-ui`) directly from GitHub —
+build and publish the image to GHCR (`ghcr.io/hugmesh/hugmesh-mod-ui`, tagged with the `tag` input or
+the full commit SHA, plus `latest`) directly from GitHub —
 useful if you're building from a fork or don't have access to the project's primary CI. It's
 inert until triggered from the Actions tab; it doesn't run on every push.
 
@@ -417,7 +453,9 @@ checkout to use `make pentest-dast` locally.
   audit, findings list + resolve); the admin-only decide control; the two disabled-with-helptext
   controls; the shared `accessibleName()` / alert+status accessibility pattern; full keyboard
   navigation; Karma unit coverage with JUnit reporting; the four-stage test/e2e/build/pentest
-  GitLab pipeline; and the baseline nginx security headers.
+  GitLab pipeline; the baseline nginx security headers and nonce-based CSP; and the MFA step-up
+  dialog (detection and re-issue are unit-tested; no human has driven a real challenge from this
+  console).
 - **`modGuard` is applied to every route** — all three `MOD_ROUTES` entries
   (`src/app/mod.routes.ts`) set `canActivate: [modGuard]`, so the standalone dev shell gets the
   same client-side role check as the host-federated build, for `/mod`, `/mod/console`, and
@@ -439,41 +477,39 @@ checkout to use `make pentest-dast` locally.
 
 - 🔭 **Wire the remaining `@cluster` e2e scenarios into CI** — promote the live-cluster-only
   Playwright + BDD scenarios into the pipeline once a cluster is available to the runner.
-- 🔭 **MFA / step-up awareness — the UI half is LANDED but INERT; mod-bff is the only blocker.**
+- 🔭 **MFA / step-up awareness — both halves are built; the deployment gate is still dark.**
   Platform-wide MFA has shipped (Casdoor TOTP enroll/challenge, a session-level `MFA_SATISFIED`
-  authority, and a step-up dialog already live in `login-ui` and `hugmesh-admin-ui`), and
-  hugmesh-mod-bff-api already gates this console's five sensitive writes (`POST /block`,
-  `POST|DELETE /ban`, `POST|DELETE /domain-lock/{role}/{user}`) with `ModStepUpGate` behind the
-  dark-by-default `app.mfa.enforce-sensitive-writes`.
-  **What this remote now has** (#1): `src/app/mfa/` — a detection predicate over `ModWriteError`
-  (`step-up-error.ts`), a trimmed `MfaService` for `POST /bff/mfa/challenge` +
-  `POST /bff/mfa/assert/webauthn/options`, and `MfaStepUpDialogComponent` ported from admin-ui.
-  The moderation console opens it inline under the refused form and re-issues the SAME request
-  snapshot once the challenge succeeds; cancelling says plainly that nothing was applied, and
-  closing it because the deployment has MFA switched off says to escalate rather than to retry.
-  The dialog is inline, not modal, so the other forms stay live while one write is stalled: AT MOST
-  ONE challenge is open at a time — a second gated write is refused with a message naming the one
-  to finish first, rather than silently displacing it.
-  **What is still missing is the DENIAL SIGNAL, in mod-bff.** `isStepUpRequiredError` fires on the
-  `X-Step-Up-Required` response header or the literal `"requires step-up"` phrase, and mod-bff
-  emits neither — a gate denial is a bare Spring `AccessDeniedException` 403 with no body and no
-  header (re-measured on its `origin/main` 86de22e, 2026-09-17: zero occurrences of the header,
-  no `accessDeniedHandler`), and the gate ships dark besides. So the dialog is unreachable today,
-  and its INERTness is pinned by a test that fails the day it stops being true.
-  **Unblock it in mod-bff** (e.g. lift the step-up conjunct out of `@PreAuthorize` into an explicit
-  check throwing `ApiException.forbidden("… requires step-up …")`, which the legacy-phrase leg
-  already matches) — no release of this remote is then needed.
-  The seam that made the UI half writable was #14/#15: `ModBffService` no longer collapses write
-  failures to `null`, so every write resolves to a `ModWriteResult` carrying the HTTP status, the
-  response body and the `X-Step-Up-Required` header.
-  **Not yet exercised by a human** — the dialog has unit coverage only; nothing has driven a real
-  Casdoor challenge from this console.
+  authority, and a step-up dialog already live in `login-ui` and `hugmesh-admin-ui`).
+  hugmesh-mod-bff-api gates this console's five sensitive writes (`POST /block`,
+  `POST|DELETE /ban`, `POST|DELETE /domain-lock/{role}/{user}`) with `ModStepUpGate`, behind the
+  dark-by-default `app.mfa.enforce-sensitive-writes` (`APP_MFA_ENFORCE_SENSITIVE_WRITES:false`,
+  `application.yml:270`). Flip it together with `app.mfa.enabled` on a JWT-carrier deployment, or
+  every gated call is refused (`application.yml:265`).
+  **Server half** (mod-bff since 2026-09-17, `ModStepUpAccessDeniedHandler`): with the gate armed,
+  a step-up refusal is `403` with `X-Step-Up-Required: X-Mod-StepUp` and a body containing
+  `requires step-up`. Every other denial keeps its old bare shape.
+  **This remote** (#1): `src/app/mfa/` holds a detection predicate over `ModWriteError`
+  (`step-up-error.ts`, which accepts the header or the phrase on 403 or 428), a trimmed
+  `MfaService` for `POST /bff/mfa/challenge` and `POST /bff/mfa/assert/webauthn/options`, and
+  `MfaStepUpDialogComponent` ported from admin-ui. The console opens the dialog inline under the
+  refused form and re-issues the SAME request snapshot once the challenge succeeds. Cancelling
+  says plainly that nothing was applied. Closing it because the deployment has MFA switched off
+  says to escalate rather than retry. The dialog is inline, not modal, so the other forms stay
+  live while one write is stalled. At most one challenge is open at a time: a second gated write
+  is refused with a message naming the one to finish first.
+  The seam that made this writable was #14/#15: `ModBffService` no longer collapses write
+  failures to `null`, so every write resolves to a `ModWriteResult` carrying the HTTP status,
+  the response body and the `X-Step-Up-Required` header.
+  **Still open:** no human has driven a real Casdoor challenge from this console (unit tests
+  and mocked e2e rows only; `e2e/features/moderation/mfa-step-up-mocked.feature`), and the last
+  box on #1, loading login-ui's federated `./mfa-step-up` in place of the inline port, is pinned
+  by two `@fixme` e2e rows.
 - 🔭 **Server-wide block, real backend for Mastodon** — the Mastodon (akkoma) leg is already wired
   to confirmed `pleroma-admin` verbs but ships dark by default behind
   `external.mastodon.enabled`; flipping it on in a given deployment is an operations task, not a UI
   change (this console already surfaces the honest `external` outcome either way). The Matrix
-  (tuwunel) leg is stubbed by architecture — no admin REST API exists on that homeserver — so it
-  won't become real without a different Matrix homeserver.
+  (tuwunel) side will not become a direct homeserver call: it has no runtime block verb, so a user
+  block stays a reversible domain-lock and an instance block stays a recorded request.
 - 🔭 **No shared profile entry point** — `hugmesh-admin-ui` exposes no shared profile remote, so
   there's no existing pattern to mirror here; this remote exposes only its three moderator views.
 
