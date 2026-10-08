@@ -390,10 +390,14 @@ it asset URLs resolve against the gateway root and the page renders blank. `ngin
   `Strict-Transport-Security` (`max-age=31536000; includeSubDomains`). The two theme stylesheets
   carry the first three but not HSTS.
 - A **nonce-based `Content-Security-Policy`** on the app location. nginx mints a nonce per request
-  (`$request_id`) and `sub_filter` writes it into every `<script>` of `index.html`. `script-src`
-  is `'self' 'nonce-…' blob:`: no `unsafe-inline` for scripts, and `blob:` only because
-  es-module-shims needs it. `connect-src 'self' blob:`, `frame-src 'none'`, `object-src 'none'`,
-  `base-uri 'self'` and `frame-ancestors 'none'` close the rest. The policy is there because the
+  (`$request_id`) and `sub_filter` writes it into every `<script>` of `index.html`. The full
+  value is:
+  `default-src 'self'; script-src 'self' 'nonce-…' blob:; style-src 'self' 'unsafe-inline' blob:;
+  img-src 'self' data:; font-src 'self'; connect-src 'self' blob:; worker-src 'self';
+  media-src 'none'; frame-src 'none'; form-action 'self'; base-uri 'self'; object-src 'none';
+  frame-ancestors 'none'`. Scripts get no `unsafe-inline`, only the nonce (`blob:` is there because
+  es-module-shims needs it). Styles do get `'unsafe-inline'`, because Angular injects component
+  styles at runtime. The policy is there because the
   gateway applies a bare `script-src 'self'` fallback to any response with no CSP of its own, and
   that blanks the page.
 
@@ -447,7 +451,7 @@ checkout to use `make pentest-dast` locally.
 
 ## Project status
 
-- **Shipped:** the three moderator views (home, console, system-findings queue); the full wired
+- **Shipped:** the three moderator views (home, console, system-findings queue); the wired
   mod-backend surface (queue + filter, refer, recommend, ban/lift, domain-lock, server-wide
   block, audit, findings list + resolve); the admin-only decide control; the two
   disabled-with-helptext controls; the shared `accessibleName()` and alert+status accessibility
@@ -461,7 +465,8 @@ checkout to use `make pentest-dast` locally.
   defense-in-depth only. The mod backend still re-checks the role and stays the authoritative
   gate.
 - **Authentication model:** see [Authentication model](#authentication-model). This remote is a
-  tenant-agnostic Angular application with no backend coupling beyond the mod-backend contract.
+  tenant-agnostic Angular application. Its backend calls are `/bff/mod/**`, the admin-bff decide
+  endpoint (`/bff/admin/moderation/{id}/decide`) and, for the step-up dialog, `/bff/mfa/*`.
 - **Typed API client (shipped):** `ng-openapi-gen` is configured, `openapi.json` and the generated
   `src/app/api` client are committed, and `ModBffService` delegates every call to the generated
   `ModeratorService`.
