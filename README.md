@@ -16,11 +16,11 @@ this remote's exposed `MOD_ROUTES` and mounts them at **`/mod`**:
 | `/mod/console`   | Moderation console     | `ModerationConsoleComponent`  |
 | `/mod/findings`  | System-findings queue  | `FindingsPanelComponent`      |
 
-Access requires the Casdoor **MOD or ADMIN** role. The host route-guards `/mod` before federating
+Access requires the Casdoor **MOD, ADMIN or SUPERADMIN** role (SUPERADMIN since operator decision 100, 2026-09-23). The host route-guards `/mod` before federating
 this remote; the remote also ships its own standalone `modGuard` (applied as `canActivate` on all
 three `MOD_ROUTES` entries, so a standalone dev shell gets the same client-side check as the
-host-federated build), gating on `SessionService.isMod()` — true for either `mod` or `admin`,
-mirroring the backend's `hasAnyRole('MOD','ADMIN')`.
+host-federated build), gating on `SessionService.isMod()` — true for `mod`, `admin` or `superadmin`,
+mirroring the backend's `hasAnyRole('MOD','ADMIN','SUPERADMIN')`.
 
 The backend is [`hugmesh-mod-bff-api`](https://github.com/hugmesh/hugmesh-mod-bff-api),
 reached same-origin at `/bff/mod/**` through the platform's front-end gateway. Every request

@@ -76,13 +76,9 @@ export const SEED_USERS: SeedUser[] = [
   { username: 'plain-user', passwordEnv: 'E2E_USER_PASSWORD', provider: 'google', roles: [], kind: 'user', domain: 'domain-a' },
 
   // ── Superadmin — the TOP of the role cascade (SUPERADMIN > ADMIN > MOD > USER).
-  //    Deliberate fold-into-admin contract, matching the ACTUAL SessionService in
-  //    src: mod-ui's isMod() recognises ONLY 'mod' or 'admin' (there is no
-  //    superadmin flag in this remote, and mod-bff-api's @PreAuthorize is
-  //    hasAnyRole('MOD','ADMIN') with no RoleHierarchy), so a superadmin reaches
-  //    the moderation console EXCLUSIVELY through the folded 'admin' role their
-  //    session carries. Seeded ['superadmin','admin'] — the same catalogue shape
-  //    the admin-ui e2e uses for its superadmin persona.
+  //    Since operator decision 100 = A, mod-ui's isMod() and isAdmin() both
+  //    recognise 'superadmin' alongside 'admin'. Seeded ['superadmin','admin'] —
+  //    the same catalogue shape the admin-ui e2e uses for its superadmin persona.
   { username: 'superadmin', passwordEnv: 'E2E_SUPERADMIN_PASSWORD', provider: 'google', roles: ['superadmin', 'admin'], kind: 'superadmin', domain: 'domain-a' },
 ];
 

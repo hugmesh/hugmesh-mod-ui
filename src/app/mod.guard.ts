@@ -14,6 +14,7 @@ import { SessionService } from './session.service';
  * moderation UI bundle for users who cannot use it.
  *
  * @see {@link SessionService.isMod} — the derived role signal this guard consults.
+ * @see {@link SessionService.isAdmin} — the derived role signal the DECIDE controls consult.
  * @see {@link MOD_ROUTES}           — where this guard is applied.
  */
 export const modGuard: CanActivateFn = () => {
