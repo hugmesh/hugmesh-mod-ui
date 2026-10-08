@@ -29,8 +29,8 @@ why. The suite leads with the cross-user and DENY coverage that rule demands:
 
 The Matrix row needs a note. Since decision 51, mod-bff answers a Matrix **user** block with
 `external: domain-locked` (a reversible domain-lock) and a Matrix **instance** block with
-`requested:no-tuwunel-verb` (`BlockOutcome.java`, `ModService.java:516-520` in
-`hugmesh-mod-bff-api`). The step `the response reports the Matrix block leg as stubbed and pending`
+`requested:no-tuwunel-verb` (`BlockOutcome.java`, `ModService.java:516-520` for the user path, and
+the "Ban vs. block" section of the `hugmesh-mod-bff-api` README). The step `the response reports the Matrix block leg as stubbed and pending`
 (`features/steps/session-steps.ts:215-223`) still expects `stubbed`, so that scenario fails against
 a current live mod-bff until the step is updated.
 
