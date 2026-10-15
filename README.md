@@ -455,26 +455,30 @@ checkout to use `make pentest-dast` locally.
   The dialog is inline, not modal, so the other forms stay live while one write is stalled: AT MOST
   ONE challenge is open at a time — a second gated write is refused with a message naming the one
   to finish first, rather than silently displacing it.
-  **The denial signal has shipped in mod-bff** (hugmesh-mod-bff-api#16, PR #18):
+  **The denial signal has shipped in mod-bff** (hugmesh-mod-bff-api#16, hugmesh-mod-bff-api PR #18):
   `ModStepUpAccessDeniedHandler` (wired in `SecurityConfig`) answers an armed-gate refusal with a
   403 carrying `X-Step-Up-Required: X-Mod-StepUp` and a body containing `requires step-up`, which are
   the two legs `isStepUpRequiredError` matches. A bare 403 (the privileged-target, self-target and
-  cross-tenant rules) is still an ordinary refusal and does not open the dialog. The loop is proven
-  against a mocked mod-bff by `e2e/features/moderation/mfa-step-up-mocked.feature` (PR #19), which
-  runs without a cluster.
-  The seam that made the UI half writable was #14/#15: `ModBffService` no longer collapses write
+  cross-tenant rules) is still an ordinary refusal and does not open the dialog. The handler only
+  signals for a caller who already holds MOD or ADMIN; a plain user gets a bare 403 even when armed.
+  The loop is driven against a mocked mod-bff and mocked Casdoor by
+  `e2e/features/moderation/mfa-step-up-mocked.feature` (mod-ui#19). It is tagged `@cluster`: it needs
+  the host shell serving this remote (the default stack is enough, no armed mod-bff or Casdoor), and
+  it is not in the default or CI run (see `e2e/README.md`).
+  The seam that made the UI half writable was mod-ui#14/#15: `ModBffService` no longer collapses write
   failures to `null`, so every write resolves to a `ModWriteResult` carrying the HTTP status, the
   response body and the `X-Step-Up-Required` header.
   **What is still open:**
   - The gate ships dark. Nobody sees a challenge until a deployment sets
-    `app.mfa.enforce-sensitive-writes=true` and `app.casdoor.mfa.enabled=true`; an operations
-    toggle, not a change in this repo.
+    `app.mfa.enforce-sensitive-writes=true` and `app.mfa.enabled=true` (env
+    `APP_MFA_ENABLED`); an operations toggle, not a change in this repo.
   - **Not yet exercised by a human** — the dialog has unit coverage and the mocked e2e loop;
     nothing has driven a real Casdoor challenge from this console. That check stays a manual
     test on a live mesh (#1).
-  - Some code comments and the unit spec in `moderation-console.component.spec.ts` still describe
-    the dialog as INERT against a server that sends a bare 403; they predate PR #18 and are due
-    a refresh.
+  - `step-up-error.ts` still carries a header saying nothing can make the predicate fire today;
+    that is stale since mod-bff-api PR #18. Some other code comments and the unit spec in
+    `moderation-console.component.spec.ts` still describe the dialog as INERT against a server that
+    sends a bare 403; they predate that PR and are due a refresh.
 
 - 🔭 **Server-wide block, real backend for Mastodon** — the Mastodon (akkoma) leg is already wired
   to confirmed `pleroma-admin` verbs but ships dark by default behind
