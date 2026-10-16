@@ -103,3 +103,9 @@
     }
   }
 }
+
+// Decision 84d: the queue row a block result's request link landed on.
+.mc-row-highlight {
+  outline: 2px solid currentColor;
+  outline-offset: -2px;
+}

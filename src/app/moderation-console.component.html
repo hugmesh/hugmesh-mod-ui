@@ -39,7 +39,16 @@
       </tr>
     </thead>
     <tbody>
-      <tr *ngFor="let r of queue()" [attr.data-request-id]="r.id">
+      <!-- [attr.id] is the anchor a block result's request link lands on (decision 84d);
+           tabindex=-1 lets revealRequest() move focus to the row without adding it to
+           the tab order. -->
+      <tr
+        *ngFor="let r of queue()"
+        [attr.id]="'mc-request-' + r.id"
+        [attr.data-request-id]="r.id"
+        tabindex="-1"
+        [class.mc-row-highlight]="highlightedRequestId() === r.id"
+      >
         <td>{{ r.requester }}</td>
         <td>{{ r.kind }}</td>
         <td>{{ r.target }}</td>
@@ -438,6 +447,39 @@
       role="status"
       aria-live="polite"
     >{{ blockNote() }}</span>
+
+    <!-- Decision 84d (hugmesh-federation-api#7): the federation-api leg of a Matrix
+         INSTANCE block, from mod-bff's structured fields — the status word verbatim
+         plus what it means. A leg that did not reach administrators (unauthorized /
+         error / not-configured) is an alert, not a polite footnote. -->
+    <span
+      *ngIf="blockFederation() as fed"
+      [class]="federationFailed(fed) ? 'field-error' : 'block-note'"
+      data-testid="mc-block-federation"
+      [attr.role]="federationFailed(fed) ? 'alert' : 'status'"
+      [attr.aria-live]="federationFailed(fed) ? 'assertive' : 'polite'"
+    >Federation moderation request — status: <strong>{{ fed.status }}</strong><ng-container
+        *ngIf="fed.requestStatus"> (request is {{ fed.requestStatus }})</ng-container>: {{ federationMessage(fed) }}</span>
+
+    <!-- A RELATIVE RouterLink (never an absolute /mod/console, never a bare href="#…",
+         which <base href> would resolve to the site root) so it works both standalone
+         and mounted under the host shell. revealRequest() does the scroll + focus. -->
+    <a
+      *ngIf="blockRequestId() !== null"
+      data-testid="mc-block-request-link"
+      [routerLink]="[]"
+      queryParamsHandling="preserve"
+      [fragment]="'mc-request-' + blockRequestId()"
+      (click)="revealRequest(blockRequestId()!)"
+    >View moderation request #{{ blockRequestId() }} in the queue</a>
+
+    <span
+      *ngIf="requestMissing()"
+      class="field-help"
+      data-testid="mc-block-request-missing"
+      role="status"
+      aria-live="polite"
+    >{{ requestMissing() }}</span>
   </form>
 
   <!-- MFA step-up for the server-wide block write (hugmesh-mod-ui#1). Rendered OUTSIDE the
