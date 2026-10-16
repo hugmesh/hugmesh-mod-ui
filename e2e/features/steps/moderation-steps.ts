@@ -342,9 +342,9 @@ Then('{string} sees the moderation queue table', async ({ user }, username: stri
 // mod-bff-api's app.mfa.enforce-sensitive-writes (plus app.mfa.enabled, which
 // mod-bff-api says must be flipped with it on a JWT-carrier deployment) and
 // auth-core's app.casdoor.mfa.enabled all default false, so
-// ModStepUpGate.satisfied() returns true unconditionally on a default stack. Mirrors the SKIP-LOUDLY
-// posture gate hugmesh-generator's moderation-media.steps.ts uses for the
-// same org-wide flag pair — an unarmed stack reports WHY, never a silent pass.
+// ModStepUpGate.satisfied() returns true unconditionally on a default stack. Like the
+// MFA posture gates in hugmesh-generator's moderation-media.steps.ts, an
+// unarmed stack skips with the reason instead of passing silently.
 const MFA_STEPUP_ARMED = process.env.MFA_STEPUP_ARMED === '1';
 
 Given('the MFA step-up gate is armed on this stack', async ({ $testInfo }) => {
