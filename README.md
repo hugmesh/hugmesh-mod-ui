@@ -17,7 +17,8 @@ remote's exposed `MOD_ROUTES` and mounts them at **`/mod`**:
 | `/mod/console`   | Moderation console     | `ModerationConsoleComponent`  |
 | `/mod/findings`  | System-findings queue  | `FindingsPanelComponent`      |
 
-Access needs the Casdoor **MOD, ADMIN or SUPERADMIN** role. The host guards `/mod` before it loads
+Access needs the Casdoor **MOD, ADMIN or SUPERADMIN** role (SUPERADMIN since operator decision 100,
+2026-09-23). The host guards `/mod` before it loads
 this remote. The remote also ships its own `modGuard`, set as `canActivate` on all three
 `MOD_ROUTES` entries, so the standalone dev shell gets the same client-side check. It gates on
 `SessionService.isMod()`, true for `mod`, `admin` or `superadmin`. That matches the backend chain
@@ -165,8 +166,8 @@ identity and role upstream.
 ([`hugmesh-admin-bff-api`](https://github.com/hugmesh/hugmesh-admin-bff-api), a different service
 from the mod backend):
 
-- **Appeals decide (approve/deny)**: `POST /bff/admin/moderation/{id}/decide`. Shown only when the
-  caller holds the `admin` role. A moderator never decides; they escalate through refer and see
+- **Appeals decide (approve/deny)**: `POST /bff/admin/moderation/{id}/decide`. Enabled only when the
+  caller holds the `admin` or `superadmin` role (`SessionService.isAdmin()`). A moderator never decides; they escalate through refer and see
   the control disabled with helptext. A failed or degraded decide is shown as such and never
   renders the row as decided.
 
@@ -496,10 +497,16 @@ checkout to use `make pentest-dast` locally.
   What made this writable was #14/#15: `ModBffService` no longer collapses write failures to
   `null`, so every write resolves to a `ModWriteResult` with the HTTP status, the response body
   and the `X-Step-Up-Required` header.
+  The server handler signals only for a caller who passes the MOD or ADMIN role check; a plain
+  user still gets a bare 403 when the gate is armed.
   **Still open:** no human has driven a real Casdoor challenge from this console (unit tests and
-  mocked e2e rows only; `e2e/features/moderation/mfa-step-up-mocked.feature`). The last box on
-  #1, loading login-ui's federated `./mfa-step-up` in place of the inline port, is pinned by two
-  `@fixme` e2e rows.
+  mocked e2e rows only; `e2e/features/moderation/mfa-step-up-mocked.feature`). That check stays a
+  manual test on a live mesh (#1). The mocked feature is tagged `@cluster`, so it is not in the
+  default or CI run (see `e2e/README.md`). The last box on #1, loading login-ui's federated
+  `./mfa-step-up` in place of the inline port, is pinned by two `@fixme` e2e rows.
+  The header comment in `step-up-error.ts`, other code comments and the unit spec in
+  `moderation-console.component.spec.ts` still describe the dialog as INERT against a server that
+  sends a bare 403. They predate mod-bff-api PR #18 and are due a refresh.
 - 🔭 **Server-wide block, real backend for Mastodon.** The Mastodon (akkoma) leg is wired to
   confirmed `pleroma-admin` verbs but ships dark behind `external.mastodon.enabled`. Turning it on
   is an operations task, not a UI change; this console already shows the honest `external`

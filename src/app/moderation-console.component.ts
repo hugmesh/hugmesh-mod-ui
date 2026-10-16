@@ -92,6 +92,11 @@ interface PendingStepUp {
  *    control DISABLED with helptext instead. A failed/degraded decide is
  *    surfaced honestly and NEVER renders the row as decided.
  *
+ *  SUPERADMIN-only: the DECIDE controls are now ENABLED for superadmin since
+ *  operator decision 100 = A (2026-09-23, hugmesh-generator#522). The admin-bff's
+ *  decide endpoint accepts SUPERADMIN (the role hierarchy makes SUPERADMIN a
+ *  superset of ADMIN and MOD).
+ *
  *  DISABLED + helptext (NO mod-bff endpoint — verified against ModController):
  *  - general role grant / revoke — no endpoint anywhere (role assignment happens
  *    at Casdoor via the reconcile loop);
