@@ -15,9 +15,8 @@
 #
 # WHY A MOCK. app.mfa.enforce-sensitive-writes and app.mfa.enabled both
 # default false, so a real stack never emits the refusal. An ARMED-stack variant
-# (a real mod-bff refusal, skip-loudly gated on MFA_STEPUP_ARMED) was drafted by a
-# separate services lane but is on no branch of this repo as of 2026-09-23 — this
-# file does not depend on it. Here page.route() answers the three write endpoints and /bff/mfa/challenge with
+# (a real mod-bff refusal, skip-loudly gated on MFA_STEPUP_ARMED) lives in
+# mfa-step-up-writes.feature — this file does not depend on it. Here page.route() answers the three write endpoints and /bff/mfa/challenge with
 # the exact wire shapes the BFF documents, so the CLIENT half of the loop —
 # recognise the signal, pause the write, retry the identical snapshot exactly
 # once, report honestly when nothing was changed — is proven on the stack we
