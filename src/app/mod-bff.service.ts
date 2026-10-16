@@ -368,10 +368,45 @@ export interface BlockRequest {
   reason?: string;
 }
 
-/** Response from POST /bff/mod/block: { blocked, external, note? }. */
+/**
+ * What happened to the federation-api leg of a Matrix INSTANCE block
+ * (operator decisions 84a-d, hugmesh-federation-api#7; mod-bff's
+ * {@code ModService.FederationFiling}, hugmesh-mod-bff-api#25):
+ *  - {@code filed}             — no open request existed; one was submitted AND referred;
+ *  - {@code referred-existing} — an open {@code recommended} row (e.g. a user's own
+ *                                recommendation) existed and was referred;
+ *  - {@code existing}          — an open row was already {@code referred}; reused, nothing written;
+ *  - {@code unauthorized}      — federation-api answered 401 to the moderator's own token;
+ *  - {@code error}             — any other failure (non-2xx, timeout, unreachable);
+ *  - {@code not-configured}    — no federation-api client is wired in mod-bff.
+ * The block itself never fails on this leg; it is always recorded in the audit trail.
+ */
+export interface BlockFederation {
+  status: 'filed' | 'referred-existing' | 'existing' | 'unauthorized' | 'error' | 'not-configured' | string;
+  /** The federation-api moderation_requests id, null when no row is known to exist. */
+  moderationRequestId: number | null;
+  /** That row's lifecycle status ('referred', or 'recommended' when the refer failed). */
+  requestStatus: string | null;
+  /** The upstream HTTP status, present only on an unauthorized/error leg that had one. */
+  httpStatus?: number;
+}
+
+/**
+ * Response from POST /bff/mod/block (200 blocked / 202 pending-reconcile). The
+ * generated client types this body as an untyped map, so this hand-written shape is
+ * the contract, taken from mod-bff's {@code ModService.BlockResult.body()} as merged
+ * in hugmesh-mod-bff-api#25. {@code note} is prose for people — never parse it; the
+ * request id is in {@code moderationRequestId} (decision 84d).
+ */
 export interface BlockResult {
+  /** 'blocked' (applied, 200) or 'pending-reconcile' (202). */
+  state?: string;
   blocked: ModAction;
   external: string;
+  /** The federation-api moderation_requests id this block filed or reused; null when none. */
+  moderationRequestId?: number | null;
+  /** Present on a Matrix INSTANCE block only. */
+  federation?: BlockFederation;
   note?: string;
 }
 
