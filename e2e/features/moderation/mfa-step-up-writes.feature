@@ -7,12 +7,12 @@
 #              offerStepUp()/stepUpSatisfied()/stepUpDismissed().
 #   - mod-bff: now stamps X-Step-Up-Required (hugmesh-mod-bff-api#16, PR #18,
 #              d5551c4c) instead of a bare 403.
-# What still ships DARK by default: SecurityConfig.java:305 in mod-bff-api
-# defaults app.mfa.enforce-sensitive-writes=false, and app.casdoor.mfa.enabled
-# is off org-wide, so ModStepUpGate.satisfied() returns true unconditionally
-# and a default stack's ban/domain-lock/block still applies with no pause.
-# @fixme until an operator arms both flags together (MFA_STEPUP_ARMED=1, see
-# steps/moderation-steps.ts) — the two Then-steps below assert the CORRECT,
+# What still ships DARK by default: mod-bff-api's SecurityConfig defaults
+# app.mfa.enforce-sensitive-writes=false, so ModStepUpGate.satisfied() returns
+# true unconditionally and a default stack's ban/domain-lock/block still applies
+# with no pause. The challenge leg is dark too: auth-core answers 503 while
+# app.casdoor.mfa.enabled=false (its default). @fixme until an operator arms
+# those flags (MFA_STEPUP_ARMED=1, see steps/moderation-steps.ts) — the two Then-steps below assert the CORRECT,
 # armed-stack behaviour the issue asks for, never today's silent-apply one.
 #
 # Completing the challenge (entering a real TOTP code and landing on the

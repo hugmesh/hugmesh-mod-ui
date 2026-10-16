@@ -339,9 +339,10 @@ Then('{string} sees the moderation queue table', async ({ user }, username: stri
 });
 
 // ── MFA step-up gate (hugmesh-mod-ui#1) ───────────────────────────────────
-// Both flags mod-bff-api needs (app.mfa.enforce-sensitive-writes and
-// app.casdoor.mfa.enabled) default OFF, so ModStepUpGate.satisfied() returns
-// true unconditionally on a plain `make stack-up`. Mirrors the SKIP-LOUDLY
+// mod-bff-api's app.mfa.enforce-sensitive-writes (plus app.mfa.enabled, which
+// mod-bff-api says must be flipped with it on a JWT-carrier deployment) and
+// auth-core's app.casdoor.mfa.enabled all default false, so
+// ModStepUpGate.satisfied() returns true unconditionally on a default stack. Mirrors the SKIP-LOUDLY
 // posture gate hugmesh-generator's moderation-media.steps.ts uses for the
 // same org-wide flag pair — an unarmed stack reports WHY, never a silent pass.
 const MFA_STEPUP_ARMED = process.env.MFA_STEPUP_ARMED === '1';
@@ -349,10 +350,10 @@ const MFA_STEPUP_ARMED = process.env.MFA_STEPUP_ARMED === '1';
 Given('the MFA step-up gate is armed on this stack', async ({ $testInfo }) => {
   $testInfo.skip(
     !MFA_STEPUP_ARMED,
-    'MFA_STEPUP_ARMED!=1 — this needs a stack with BOTH app.mfa.enforce-sensitive-writes=true '
-    + 'and app.casdoor.mfa.enabled=true on mod-bff-api/auth-core (both default false, i.e. '
-    + 'ships dark). Set MFA_STEPUP_ARMED=1 in the environment once the mesh under test carries '
-    + 'those flags.',
+    'MFA_STEPUP_ARMED!=1 — this needs a stack with app.mfa.enforce-sensitive-writes=true '
+    + '(and app.mfa.enabled=true) on mod-bff-api and app.casdoor.mfa.enabled=true on auth-core '
+    + '(all default false, i.e. ships dark). Set MFA_STEPUP_ARMED=1 in the environment once the '
+    + 'mesh under test carries those flags.',
   );
 });
 
