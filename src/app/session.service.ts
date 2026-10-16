@@ -58,11 +58,24 @@ export class SessionService {
   readonly loggedIn = computed(() => this.session() !== null);
 
   /**
-   * ADMIN tier — Casdoor `'admin'` role. The admin-bff gates its endpoints on
-   * `hasRole('ADMIN')`; the moderation console uses this to enable/disable the
-   * admin-only DECIDE controls.
+   * ADMIN tier — Casdoor `'admin'` or `'superadmin'` role. The admin-bff gates its
+   * endpoints on `hasRole('ADMIN')` (and `hasRole('SUPERADMIN')`); the
+   * moderation console uses this to enable/disable the admin-only DECIDE controls.
+   *
+   * `'superadmin'` counts since operator decision 100 = A (2026-09-23,
+   * hugmesh-generator#522). It grants no new privilege — it removes the one layer
+   * that disagreed with every other:
+   *  - mod-bff-api SecurityConfig: `/bff/mod/**` -> `hasAnyRole("MOD","ADMIN","SUPERADMIN")`,
+   *    and its method-security role hierarchy makes SUPERADMIN a superset of ADMIN and MOD;
+   *  - the host shell's own `isMod()` (hugmesh-host-shell session.service.ts) is
+   *    `mod || admin || superadmin`, and it is what shows the Moderation menu entry.
+   * Before this, a superadmin-only account saw that entry and was then sent to
+   * `/login` by this remote's guard. Matching is by exact role slug, never substring.
    */
-  readonly isAdmin = computed(() => (this.session()?.roles ?? []).includes('admin'));
+  readonly isAdmin = computed(() => {
+    const roles = this.session()?.roles ?? [];
+    return roles.includes('admin') || roles.includes('superadmin');
+  });
 
   /**
    * MOD tier — a Casdoor `'mod'`, `'admin'` OR `'superadmin'` role. Unlocks this
@@ -88,6 +101,14 @@ export class SessionService {
    * Mastodon micro-frontends are available only after this is `true`.
    */
   readonly fullyRegistered = computed(() => this.session()?.registrationComplete === true);
+
+  /**
+   * Whether the user is a superadmin. This is a convenience signal for the
+   * moderation console to distinguish superadmin-only accounts from admin-only
+   * accounts (the DECIDE controls are now enabled for superadmin since decision
+   * 100 = A).
+   */
+  readonly isSuperadmin = computed(() => (this.session()?.roles ?? []).includes('superadmin'));
 
   constructor() {
     // Each native-federation remote and the host shell get their OWN Angular

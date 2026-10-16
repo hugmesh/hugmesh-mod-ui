@@ -13,7 +13,7 @@
 #     ModStepUpAccessDeniedHandler). Both legs of mfa/step-up-error.ts now have
 #     a real emitter.
 #
-# WHY A MOCK. app.mfa.enforce-sensitive-writes and app.casdoor.mfa.enabled both
+# WHY A MOCK. app.mfa.enforce-sensitive-writes and app.mfa.enabled both
 # default false, so a real stack never emits the refusal. An ARMED-stack variant
 # (a real mod-bff refusal, skip-loudly gated on MFA_STEPUP_ARMED) was drafted by a
 # separate services lane but is on no branch of this repo as of 2026-09-23 — this
