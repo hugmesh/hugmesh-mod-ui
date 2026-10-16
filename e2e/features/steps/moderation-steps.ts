@@ -361,9 +361,9 @@ Then('{string} sees the step-up challenge dialog', async ({ user }, username: st
   const page = pageOf(user(username).username);
   const dialog = page.locator('[data-testid="mfa-stepup-dialog"]');
   await expect(dialog).toBeVisible();
-  // A dark deployment renders the SAME dialog testid with an honest "not
-  // enabled yet" message rather than the verify form — distinguish the two so
-  // this step cannot pass against a dark stack that merely rendered a shell.
-  await expect(page.locator('[data-testid="mfa-stepup-dark"]')).not.toBeVisible();
+  // The dialog opens on the verify form (mfa-stepup-intro). It switches to the
+  // "not enabled yet" message (mfa-stepup-dark) only after a challenge call
+  // comes back dark, which this step does not make.
   await expect(page.locator('[data-testid="mfa-stepup-intro"]')).toBeVisible();
+  await expect(page.locator('[data-testid="mfa-stepup-dark"]')).not.toBeVisible();
 });
