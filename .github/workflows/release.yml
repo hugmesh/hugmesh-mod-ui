@@ -1,34 +1,142 @@
 name: Release
 
-# Manual-only. This workflow is intentionally NOT wired to push/tags — it stays
-# fully inert until a human triggers it from the Actions tab once this repo is
-# ready to publish releases from GitHub instead of (or alongside) the in-cluster
-# GitLab mirror CI (see .gitlab-ci.yml's `build:image` job, which this mirrors).
+# Builds the mod-ui container image and pushes it to GHCR.
+#
+#   push to main                  -> :main and :sha-<12 hex>
+#   push of tag v<version>        -> :<version>, :beta (beta versions only) and
+#                                    :sha-<12 hex>, plus a GitHub prerelease
+#   workflow_dispatch on main     -> same as a push to main
+#   workflow_dispatch on a v* tag -> re-runs that release; an image or GitHub
+#                                    release that already exists is left alone
+#   anything else                 -> refused by the version job
+#
+# The version source is package.json "version" (package-lock.json must match).
+# A tag must equal "v" + that version and point at a commit on main.
+# A published version tag is never overwritten, and :latest is never pushed.
+#
+# This workflow has no pull_request trigger and must never get one. Jobs run on
+# the self-hosted runner only when the repo variable RUNS_ON_PUBLISH is set
+# (a JSON array such as ["self-hosted","Linux","X64"]) AND the event is a push
+# or dispatch on main or a v* tag; otherwise they run on ubuntu-latest.
+# Deleting RUNS_ON_PUBLISH sends every job back to hosted runners.
 on:
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Image tag to publish (defaults to the short commit SHA)'
-        required: false
-        type: string
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: hugmesh/hugmesh-mod-ui
+  IMAGE_NAME: ghcr.io/hugmesh/hugmesh-mod-ui
 
 jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
+  version:
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')) && vars.RUNS_ON_PUBLISH || '"ubuntu-latest"') }}
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      kind: ${{ steps.v.outputs.kind }}
+      sha12: ${{ steps.v.outputs.sha12 }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read and check the version
+        id: v
+        run: |
+          set -euo pipefail
+          version="$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')"
+          lock="$(python3 -c 'import json; l = json.load(open("package-lock.json")); print(l["version"], l["packages"][""]["version"])')"
+          if [ "$lock" != "$version $version" ]; then
+            echo "::error::package-lock.json version ($lock) does not match package.json ($version)"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-beta\.[1-9][0-9]*)?$ ]]; then
+            echo "::error::version '$version' is not MAJOR.MINOR.PATCH or MAJOR.MINOR.PATCH-beta.N"
+            exit 1
+          fi
+          case "$GITHUB_REF" in
+            refs/heads/main)
+              kind=main
+              ;;
+            refs/tags/v*)
+              if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+                echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+                exit 1
+              fi
+              git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+              if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+                echo "::error::tag $GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main"
+                exit 1
+              fi
+              kind=release
+              ;;
+            *)
+              echo "::error::refusing to publish from $GITHUB_REF (only main and v* tags publish)"
+              exit 1
+              ;;
+          esac
+          {
+            echo "version=$version"
+            echo "kind=$kind"
+            echo "sha12=${GITHUB_SHA:0:12}"
+          } >> "$GITHUB_OUTPUT"
+          echo "version=$version kind=$kind ref=$GITHUB_REF"
+
+  # Same unit-test gate as the GitLab pipeline's `test` job, which
+  # `build:image` needs. The checkout is mounted read-only and copied inside
+  # the container, so nothing root-owned is left in a self-hosted workspace.
+  test:
+    needs: version
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')) && vars.RUNS_ON_PUBLISH || '"ubuntu-latest"') }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Unit tests (Karma, headless Chromium)
+        run: |
+          docker run --rm --shm-size=1gb -v "$PWD:/src:ro" node:24-alpine sh -euc '
+            apk add --no-cache chromium >/dev/null
+            mkdir /work
+            cd /src
+            tar --exclude=./.git --exclude=./node_modules -cf - . | tar -xf - -C /work
+            cd /work
+            npm ci --no-audit --no-fund
+            CHROME_BIN=/usr/bin/chromium npm test
+          '
+
+  image:
+    needs: [version, test]
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')) && vars.RUNS_ON_PUBLISH || '"ubuntu-latest"') }}
     permissions:
       contents: read
       packages: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      KIND: ${{ needs.version.outputs.kind }}
+      SHA12: ${{ needs.version.outputs.sha12 }}
     steps:
-      - name: Checkout
+      - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Resolve tag
-        id: vars
-        run: echo "tag=${{ inputs.tag || github.sha }}" | cut -c1-200 >> "$GITHUB_OUTPUT"
+      # A self-hosted runner shares $HOME with other jobs and with its owner.
+      # Keep this job's registry login and buildx builder in a private config
+      # dir so a parallel job's logout cannot pull credentials out from under it.
+      - name: Use a private Docker config for this job
+        run: |
+          cfg="$RUNNER_TEMP/docker-config"
+          mkdir -p "$cfg"
+          if [ -d "$HOME/.docker/cli-plugins" ]; then
+            ln -sfn "$HOME/.docker/cli-plugins" "$cfg/cli-plugins"
+          fi
+          echo "DOCKER_CONFIG=$cfg" >> "$GITHUB_ENV"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -36,15 +144,99 @@ jobs:
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Refuse to overwrite a published version
+        id: exists
+        run: |
+          set -uo pipefail
+          if [ "$KIND" != release ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          ref="$IMAGE_NAME:$VERSION"
+          if out="$(docker buildx imagetools inspect "$ref" 2>&1)"; then
+            if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+              echo "::notice::$ref is already published; it is not rebuilt or overwritten"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "::error::$ref is already published. A published version is never overwritten: raise the beta number instead."
+            exit 1
+          fi
+          case "$out" in
+            *": not found"*)
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              # Fail closed: an auth or network error must not look like "absent".
+              # A package that has never been pushed also lands here; publish
+              # main first (it creates the package), then re-run this tag.
+              echo "::error::could not tell whether $ref exists: $out"
+              exit 1
+              ;;
+          esac
+
+      - name: Compute tags and labels
+        id: meta
+        if: steps.exists.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          if [ "$KIND" = release ]; then
+            tags="$IMAGE_NAME:$VERSION"
+            case "$VERSION" in
+              *-beta.*) tags="$tags"$'\n'"$IMAGE_NAME:beta" ;;
+            esac
+            label_version="$VERSION"
+          else
+            tags="$IMAGE_NAME:main"
+            label_version=main
+          fi
+          tags="$tags"$'\n'"$IMAGE_NAME:sha-$SHA12"
+          {
+            echo "tags<<EOF_TAGS"
+            echo "$tags"
+            echo "EOF_TAGS"
+            echo "labels<<EOF_LABELS"
+            echo "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY"
+            echo "org.opencontainers.image.version=$label_version"
+            echo "org.opencontainers.image.revision=$GITHUB_SHA"
+            echo "EOF_LABELS"
+          } >> "$GITHUB_OUTPUT"
+          echo "Tags:"
+          echo "$tags"
+
       - name: Build and push image
+        if: steps.exists.outputs.skip != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.tag }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          pull: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  github-release:
+    needs: [version, image]
+    if: needs.version.outputs.kind == 'release'
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.event_name != 'pull_request_target' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/studio-v')) && vars.RUNS_ON_PUBLISH || '"ubuntu-latest"') }}
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Create the GitHub prerelease
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::notice::release $GITHUB_REF_NAME already exists; leaving it alone"
+            exit 0
+          fi
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes)
+          case "$VERSION" in
+            *-*) args+=(--prerelease --latest=false) ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" "${args[@]}"
