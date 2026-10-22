@@ -1,6 +1,6 @@
 {
   "name": "@hugmesh/mod",
-  "version": "0.1.0",
+  "version": "0.2.0-beta.1",
   "description": "Moderator console (moderation queue, refer-to-admin, server-wide block, audit) — Angular micro-frontend (native-federation remote) for the hugmesh.net host.",
   "license": "MIT",
   "private": true,
