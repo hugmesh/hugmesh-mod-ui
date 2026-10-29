@@ -429,10 +429,30 @@ The primary pipeline is GitLab CI (`.gitlab-ci.yml`), with four stages:
   scan plus nuclei). Both are `allow_failure: true` and run on the default branch and merge
   requests, so a finding shows in the MR widget without breaking the pipeline.
 
-A manual-dispatch GitHub Actions workflow (`.github/workflows/release.yml`) builds and publishes
-the image to GHCR (`ghcr.io/hugmesh/hugmesh-mod-ui`, tagged with the `tag` input or the full
-commit SHA, plus `latest`). Use it from a fork or without access to the primary CI. It does
-nothing until you trigger it from the Actions tab.
+The one GitHub Actions workflow, `.github/workflows/release.yml`, publishes
+`ghcr.io/hugmesh/hugmesh-mod-ui`. It first runs the same Karma unit tests as the GitLab `test`
+job, then:
+
+- On a push to `main`, it pushes the tags `main` and `sha-<first 12 hex of the commit>`.
+- On a `v<version>` tag, it pushes `<version>`, `beta` (for beta versions) and `sha-<12 hex>`,
+  and creates a GitHub release marked as a prerelease and not latest. The tag must equal `v`
+  plus the `version` in `package.json` (and `package-lock.json`), and it must point at a commit
+  on `main`. A version tag that is already in the registry is never overwritten.
+- A manual run (`workflow_dispatch`) on `main` or on a `v*` tag does the same as the matching
+  push. Any other branch or tag is refused.
+- It never pushes `latest`, and it has no pull-request trigger.
+
+Its jobs run on the self-hosted runner only when the repository variable `RUNS_ON_PUBLISH` holds
+a runner label list (for example `["self-hosted","Linux","X64"]`) and the run is for `main` or a
+`v*` tag. Otherwise they run on GitHub's hosted `ubuntu-latest`.
+
+### Versions
+
+The version in `package.json` is the image version. It uses `MAJOR.MINOR.PATCH-beta.N`; the
+current version is `0.2.0-beta.1` (built and tested, not yet proven on a live mesh). To publish a
+beta, set the new version in `package.json` and `package-lock.json` (for example
+`npm version 0.2.0-beta.2 --no-git-tag-version`), merge that to `main`, then push an annotated
+tag `v0.2.0-beta.2` on that commit. A fix during a beta raises `N`.
 
 ### Local security testing
 
