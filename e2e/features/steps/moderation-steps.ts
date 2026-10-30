@@ -22,7 +22,7 @@
 // shell must serve the remote; bddgen compiles them regardless.
 
 import { Locator, Page, expect } from '@playwright/test';
-import { When, Then } from '../support/fixtures';
+import { Given, When, Then } from '../support/fixtures';
 import { banRequestState, pageRegistry } from './_registry';
 
 function pageOf(username: string) {
@@ -336,4 +336,34 @@ When('{string} filters the queue by {string}', async ({ user }, username: string
 Then('{string} sees the moderation queue table', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
   await expect(page.locator('[data-testid="mc-queue"]')).toBeVisible();
+});
+
+// ── MFA step-up gate (hugmesh-mod-ui#1) ───────────────────────────────────
+// mod-bff-api's app.mfa.enforce-sensitive-writes (plus app.mfa.enabled, which
+// mod-bff-api says must be flipped with it on a JWT-carrier deployment) and
+// auth-core's app.casdoor.mfa.enabled all default false, so
+// ModStepUpGate.satisfied() returns true unconditionally on a default stack. Like the
+// MFA posture gates in hugmesh-generator's moderation-media.steps.ts, an
+// unarmed stack skips with the reason instead of passing silently.
+const MFA_STEPUP_ARMED = process.env.MFA_STEPUP_ARMED === '1';
+
+Given('the MFA step-up gate is armed on this stack', async ({ $testInfo }) => {
+  $testInfo.skip(
+    !MFA_STEPUP_ARMED,
+    'MFA_STEPUP_ARMED!=1 — this needs a stack with app.mfa.enforce-sensitive-writes=true '
+    + '(and app.mfa.enabled=true) on mod-bff-api and app.casdoor.mfa.enabled=true on auth-core '
+    + '(all default false, i.e. ships dark). Set MFA_STEPUP_ARMED=1 in the environment once the '
+    + 'mesh under test carries those flags.',
+  );
+});
+
+Then('{string} sees the step-up challenge dialog', async ({ user }, username: string) => {
+  const page = pageOf(user(username).username);
+  const dialog = page.locator('[data-testid="mfa-stepup-dialog"]');
+  await expect(dialog).toBeVisible();
+  // The dialog opens on the verify form (mfa-stepup-intro). It switches to the
+  // "not enabled yet" message (mfa-stepup-dark) only after a challenge call
+  // comes back dark, which this step does not make.
+  await expect(page.locator('[data-testid="mfa-stepup-intro"]')).toBeVisible();
+  await expect(page.locator('[data-testid="mfa-stepup-dark"]')).not.toBeVisible();
 });

@@ -522,7 +522,9 @@ checkout to use `make pentest-dast` locally.
   **Still open:** no human has driven a real Casdoor challenge from this console (unit tests and
   mocked e2e rows only; `e2e/features/moderation/mfa-step-up-mocked.feature`). That check stays a
   manual test on a live mesh (#1). The mocked feature is tagged `@cluster`, so it is not in the
-  default or CI run (see `e2e/README.md`). The last box on #1, loading login-ui's federated
+  default or CI run (see `e2e/README.md`). An armed-stack variant,
+  `e2e/features/moderation/mfa-step-up-writes.feature`, checks that the dialog opens against a real
+  mod-bff; it is `@cluster` too and skips unless `MFA_STEPUP_ARMED=1`. The last box on #1, loading login-ui's federated
   `./mfa-step-up` in place of the inline port, is pinned by two `@fixme` e2e rows.
   The header comment in `step-up-error.ts`, other code comments and the unit spec in
   `moderation-console.component.spec.ts` still describe the dialog as INERT against a server that
