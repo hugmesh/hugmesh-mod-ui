@@ -431,20 +431,29 @@ The primary pipeline is GitLab CI (`.gitlab-ci.yml`), with four stages:
 
 The one GitHub Actions workflow, `.github/workflows/release.yml`, publishes
 `ghcr.io/hugmesh/hugmesh-mod-ui`. It first runs the same Karma unit tests as the GitLab `test`
-job, then:
+job. The channel comes from the ref (`scripts/release-channel.sh`, tested by
+`scripts/test-release-channel.sh`, which the version job runs before anything else):
 
 - On a push to `main`, it pushes the tags `main` and `sha-<first 12 hex of the commit>`.
-- On a `v<version>` tag, it pushes `<version>`, `beta` (for beta versions) and `sha-<12 hex>`,
-  and creates a GitHub release marked as a prerelease and not latest. The tag must equal `v`
-  plus the `version` in `package.json` (and `package-lock.json`), and it must point at a commit
-  on `main`. A version tag that is already in the registry is never overwritten.
-- A manual run (`workflow_dispatch`) on `main` or on a `v*` tag does the same as the matching
-  push. Any other branch or tag is refused.
-- It never pushes `latest`, and it has no pull-request trigger.
+- On a push to a `release/X.Y` branch, it pushes `sha-<12 hex>` only. Any other `release/*`
+  name is refused.
+- On a beta tag `vX.Y.Z-beta.N`, it pushes `X.Y.Z-beta.N`, `beta` and `sha-<12 hex>`, and
+  creates a GitHub release marked as a prerelease and not latest. The commit must be on `main`.
+- On a stable tag `vX.Y.Z`, it pushes `X.Y.Z` and `sha-<12 hex>`, plus `X.Y` when no newer
+  `vX.Y.*` is published and `latest` when no newer stable on any line is published, and creates
+  a GitHub release marked Latest only in that last case. The commit must be on `release/X.Y`.
+  A patch on an older line moves `X.Y` but never `latest`.
+- Every tag must equal `v` plus the `version` in `package.json` (and `package-lock.json`). The
+  version tag `X.Y.Z` (or `X.Y.Z-beta.N`) already in the registry is never overwritten; the
+  floating tags `beta`, `X.Y` and `latest` move. Every pushed tag is checked to resolve to the
+  one signed digest.
+- A manual run (`workflow_dispatch`) on `main`, a `release/X.Y` branch or a `v*` tag does the
+  same as the matching push. Any other branch or tag is refused. There is no pull-request
+  trigger.
 
 Its jobs run on the self-hosted runner only when the repository variable `RUNS_ON_PUBLISH` holds
 a runner label list (for example `["self-hosted","Linux","X64"]`) and the run is for `main` or a
-`v*` tag. Otherwise they run on GitHub's hosted `ubuntu-latest`.
+`v*` tag. Otherwise (`release/X.Y` branches included) they run on GitHub's hosted `ubuntu-latest`.
 
 ### Versions
 
