@@ -32,11 +32,11 @@ import { HttpErrorResponse } from '@angular/common/http';
  *
  * <h2>Scope: this is the seam, not the dialog</h2>
  * Carrying the step-up signal out of the service is deliberately NOT the same
- * thing as wiring the step-up dialog. hugmesh-mod-ui#1 (port admin-ui's
- * {@code MfaStepUpDialogComponent} in front of ban/lift, domain-lock/unlock and
- * block) stays open, and mod-bff does not stamp this header yet — its
- * {@code ModStepUpGate} denial is still a bare Spring 403 with no body. What
- * changed here is only that a signal, whenever mod-bff starts sending one, now
+ * thing as wiring the step-up challenge. That is hugmesh-mod-ui#1's job: the
+ * console renders login-ui's federated challenge ({@code mfa/mod-step-up.component.ts})
+ * in front of ban/lift, domain-lock/unlock and block, and mod-bff stamps this
+ * header since its PR #18 ({@code ModStepUpAccessDeniedHandler}). What this
+ * module does is only that a signal, whenever mod-bff sends one, now
  * REACHES UI code instead of being swallowed. See hugmesh-mod-ui#14.
  */
 /**
@@ -356,7 +356,7 @@ export function describeWriteFailure(error: ModWriteError, action: string, hint?
   // The clause deliberately makes NO claim about whether the caller can satisfy
   // the step-up. It used to end "this console cannot complete a step-up yet, so
   // the action cannot be retried here", which stopped being true for the three
-  // gated forms when hugmesh-mod-ui#1 wired <hug-mfa-step-up-dialog> in front of
+  // gated forms when hugmesh-mod-ui#1 wired <hug-mod-step-up> in front of
   // them — and this function is shared with refer / recommend / resolve-finding,
   // which have no dialog. Only the CALLER knows, so only the caller says. In
   // practice the gated writes never reach this sentence at all: the console

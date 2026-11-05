@@ -1,0 +1,41 @@
+<section
+  class="hug-mod-stepup"
+  role="group"
+  aria-label="Identity check required"
+  data-testid="mfa-stepup-host"
+>
+  <!-- login-ui's federated MfaChallengeComponent (`mfa-challenge-*` testids)
+       is created here while state() is 'dialog'. -->
+  <ng-container #dialogHost></ng-container>
+
+  @if (state() === 'loading') {
+    <p class="mfa-help" role="status" data-testid="mfa-stepup-loading">Loading the identity check…</p>
+  } @else if (state() === 'dark') {
+    <!-- The challenge reported `unavailable`: /bff/mfa/* answers 503 because MFA
+         ships dark here. login-ui renders no way out of that state on purpose, so
+         this surface offers the Close; the console then says to escalate. -->
+    <p class="mfa-help" data-testid="mfa-stepup-dark">
+      Two-factor authentication is not enabled on this deployment, so this action
+      cannot be confirmed here. Nothing was changed.
+    </p>
+    <div class="mfa-actions">
+      <button type="button" class="mfa-btn" data-testid="mfa-stepup-close" (click)="closeDark()">
+        Close
+      </button>
+    </div>
+  } @else if (state() === 'link') {
+    <!-- The federated dialog could not be loaded (decision 35's degrade path):
+         offer the platform's challenge page with a returnTo back here. -->
+    <p data-testid="mfa-stepup-degraded">
+      This action needs a fresh identity check, and it cannot be shown here.
+      Verify on the platform's MFA page, then come back and submit it again.
+      Nothing has been changed.
+    </p>
+    <div class="mfa-actions">
+      <a class="mfa-btn primary" [href]="href()" data-testid="mfa-stepup-link">Verify and return</a>
+      <button type="button" class="mfa-btn" data-testid="mfa-stepup-not-now" (click)="dismissed.emit(false)">
+        Not now
+      </button>
+    </div>
+  }
+</section>

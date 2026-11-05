@@ -15,7 +15,7 @@ import {
   RecommendRequest,
 } from './mod-bff.service';
 import { ModWriteError, ModWriteResult, describeWriteFailure } from './mod-write-error';
-import { MfaStepUpDialogComponent } from './mfa/mfa-step-up-dialog.component';
+import { ModStepUpComponent } from './mfa/mod-step-up.component';
 import { isStepUpRequiredError } from './mfa/step-up-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
@@ -121,7 +121,7 @@ interface PendingStepUp {
 @Component({
   selector: 'hug-moderation-console',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TargetTypeaheadComponent, MfaStepUpDialogComponent],
+  imports: [CommonModule, FormsModule, RouterLink, TargetTypeaheadComponent, ModStepUpComponent],
   templateUrl: './moderation-console.component.html',
   styleUrl: './moderation-console.component.scss',
 })
@@ -156,15 +156,16 @@ export class ModerationConsoleComponent implements OnInit {
 
   /**
    * The sensitive write currently stalled on an MFA step-up, or null. Non-null
-   * renders {@code <hug-mfa-step-up-dialog>} under that form and holds the exact
-   * call to re-issue afterwards.
+   * renders {@code <hug-mod-step-up>} under that form — which loads login-ui's
+   * federated challenge in place, or degrades to the {@code ?returnTo=} link —
+   * and holds the exact call to re-issue afterwards.
    *
-   * <p>INERT AS LANDED: nothing can set this today. hugmesh-mod-bff-api's
-   * {@code ModStepUpGate} denies with a bare Spring 403 that carries neither the
-   * {@code X-Step-Up-Required} header nor the "requires step-up" phrase, so
-   * {@code isStepUpRequiredError} never returns true — and the gate ships dark
-   * besides. The measurement, and the one cross-repo change that unblocks it, are
-   * written up in {@code mfa/step-up-error.ts}. See hugmesh-mod-ui#1.
+   * <p>Set by {@code offerStepUp} whenever mod-bff's ARMED {@code ModStepUpGate}
+   * refuses a write with {@code X-Step-Up-Required: X-Mod-StepUp} (mod-bff-api
+   * PR #18, 2026-09-18). The gate ships dark ({@code app.mfa.enforce-sensitive-writes}
+   * defaults false), so on a default deployment nothing sets this; the loop is
+   * proven against a mocked refusal in {@code e2e/features/moderation/mfa-step-up-mocked.feature}.
+   * See hugmesh-mod-ui#1.
    */
   readonly pendingStepUp = signal<PendingStepUp | null>(null);
 
@@ -451,28 +452,28 @@ export class ModerationConsoleComponent implements OnInit {
     row?.focus();
   }
 
-  // MFA STEP-UP (hugmesh-mod-ui#1) — the UI half is WIRED but INERT.
+  // MFA STEP-UP (hugmesh-mod-ui#1) — both halves exist; the gate ships dark.
   //
-  // ban/lift, domainLock/domainUnlock and block now route their failures through
-  // offerStepUp() below, which opens <hug-mfa-step-up-dialog> and re-issues the
-  // SAME request snapshot once the challenge succeeds. Nothing can open it today.
+  // ban/lift, domainLock/domainUnlock and block route their failures through
+  // offerStepUp() below, which renders <hug-mod-step-up> under the refused form
+  // and re-issues the SAME request snapshot, exactly once, when the challenge
+  // reports `satisfied`. The challenge itself is hugmesh-login-ui's federated
+  // `./mfa-step-up` (decisions 21/35, hugmesh-generator#347): loaded on demand
+  // from the HARDCODED /login/remoteEntry.json (mfa/mfa-step-up.ts), and degraded
+  // to the /login/mfa/challenge?returnTo= link when that load is rejected.
   //
-  // The SERVER half exists but does not SIGNAL. hugmesh-mod-bff-api's
-  // ModStepUpGate is the @PreAuthorize companion on exactly these five endpoints
-  // ("hasAnyRole('MOD','ADMIN') and @modStepUpGate.satisfied(authentication)" —
-  // ModController.java :200, :242, :264, :298, :329), armed by
-  // app.mfa.enforce-sensitive-writes and shipping DARK (SecurityConfig.java:305).
-  // A denial is therefore a bare Spring AccessDeniedException 403: re-measured on
-  // that repo's origin/main 86de22e on 2026-09-17, it has ZERO occurrences of
-  // X-Step-Up-Required / STEP_UP_REQUIRED / stepUpRequired and no
-  // accessDeniedHandler, so neither leg of isStepUpRequiredError can fire.
-  //
-  // ONE cross-repo change unblocks it, with NO release of this remote: make the
-  // denial carry the platform signal — e.g. lift the step-up conjunct out of
-  // @PreAuthorize into an explicit check throwing
-  // ApiException.forbidden("... requires step-up ..."), which the legacy-phrase
-  // leg already matches. mfa/step-up-error.ts carries the full measurement, the
-  // two deliberate divergences from admin-ui's predicate, and the status policy.
+  // The SERVER half signals since hugmesh-mod-bff-api PR #18 (d5551c4,
+  // 2026-09-18): an ARMED ModStepUpGate refuses with 403 +
+  // `X-Step-Up-Required: X-Mod-StepUp` + `{"error":"<verb> requires step-up
+  // re-authentication (present X-Mod-StepUp)"}` (ModStepUpAccessDeniedHandler),
+  // so both legs of isStepUpRequiredError have a real emitter. The gate is still
+  // armed by app.mfa.enforce-sensitive-writes, which defaults false, and the MFA
+  // surface itself ships dark (app.casdoor.mfa.enabled=false, every /bff/mfa/*
+  // answers 503). On a default deployment a sensitive write is therefore never
+  // refused; the loop is proven against a MOCKED refusal
+  // (e2e/features/moderation/mfa-step-up-mocked.feature) and a human challenge on
+  // an armed mesh stays a manual test. mfa/step-up-error.ts carries the status
+  // policy and the two deliberate divergences from admin-ui's predicate.
   //
   // The seam that made this writable at all is hugmesh-mod-ui#15: ModBffService
   // no longer collapses write failures to null, so every write returns a
@@ -623,9 +624,10 @@ export class ModerationConsoleComponent implements OnInit {
    * error naming the action the moderator has to finish first. AT MOST ONE
    * challenge is live at a time — see the {@code live} branch for why.
    *
-   * <p>INERT AS LANDED — {@code isStepUpRequiredError} cannot return true against
-   * today's mod-bff, which denies with a bare 403 carrying neither signal leg.
-   * The evidence and the unblocking change are in {@code mfa/step-up-error.ts}.
+   * <p>{@code isStepUpRequiredError} fires on the refusal an ARMED mod-bff sends
+   * ({@code X-Step-Up-Required: X-Mod-StepUp}, or the "requires step-up" phrase);
+   * which statuses are recognised, and why 401 is not, is in
+   * {@code mfa/step-up-error.ts}.
    */
   private offerStepUp(
     error: ModWriteError,

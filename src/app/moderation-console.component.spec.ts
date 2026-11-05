@@ -1,5 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { signal } from '@angular/core';
+import { Component, Type, output, signal } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideLocationMocks } from '@angular/common/testing';
 import { BehaviorSubject } from 'rxjs';
@@ -16,7 +16,28 @@ import {
 import { ModWriteError, ModWriteResult } from './mod-write-error';
 import { AdminBffService } from './admin-bff.service';
 import { SessionService } from './session.service';
-import { MfaService } from './mfa/mfa.service';
+import { LOGIN_STEP_UP_LOADER, LoginMfaStepUpComponent, LoginStepUpModule } from './mfa/mfa-step-up';
+
+/**
+ * A stand-in for login-ui's federated MfaChallengeComponent (hugmesh-mod-ui#1,
+ * decisions 21/35): the three outputs the console's wrapper subscribes, and
+ * login-ui's own root testid so the "renders in place" assertions read the same
+ * as the e2e rows. Instances are kept so a test can drive the outputs.
+ */
+@Component({
+  selector: 'fake-login-mfa',
+  standalone: true,
+  template: '<p data-testid="mfa-challenge-view">fake federated challenge</p>',
+})
+class FakeLoginMfaComponent {
+  static readonly instances: FakeLoginMfaComponent[] = [];
+  constructor() {
+    FakeLoginMfaComponent.instances.push(this);
+  }
+  readonly satisfied = output<void>();
+  readonly dismissed = output<void>();
+  readonly unavailable = output<void>();
+}
 
 const request: ModerationRequest = {
   id: 7,
@@ -76,9 +97,11 @@ describe('ModerationConsoleComponent', () => {
   let component: ModerationConsoleComponent;
   let bff: jasmine.SpyObj<ModBffService>;
   let admin: jasmine.SpyObj<AdminBffService>;
-  // The step-up dialog is a child of this component, so its MfaService must be
-  // resolvable even in the tests that never open it (hugmesh-mod-ui#1).
-  let mfa: jasmine.SpyObj<MfaService>;
+  // The step-up offer loads login-ui's federated challenge through this seam; the
+  // real loader would fetch /login/remoteEntry.json (hugmesh-mod-ui#1). `loads`
+  // counts calls, `loaderRejects` drives the decision-35 degrade path.
+  let loads: number;
+  let loaderRejects: boolean;
   let moderation$: BehaviorSubject<ModerationRequest[]>;
   let audit$: BehaviorSubject<ModAction[]>;
   // The target pickers pull their suggestions from ModDirectoryService, which subscribes
@@ -116,8 +139,16 @@ describe('ModerationConsoleComponent', () => {
     admin = jasmine.createSpyObj<AdminBffService>('AdminBffService', ['decide']);
     admin.decide.and.resolveTo({ ...request, status: 'approved' });
 
-    mfa = jasmine.createSpyObj<MfaService>('MfaService', ['challenge', 'assertWebauthnOptions']);
-    mfa.challenge.and.resolveTo({ ok: true, dark: false, status: 200, data: { mfaSatisfied: true } });
+    loads = 0;
+    loaderRejects = false;
+    FakeLoginMfaComponent.instances.length = 0;
+    const loader = async (): Promise<LoginStepUpModule> => {
+      loads++;
+      if (loaderRejects) throw new Error("Remote 'login' is not initialized");
+      return {
+        loadMfaStepUpComponent: () => Promise.resolve(FakeLoginMfaComponent as Type<LoginMfaStepUpComponent>),
+      };
+    };
 
     await TestBed.configureTestingModule({
       imports: [ModerationConsoleComponent],
@@ -125,7 +156,7 @@ describe('ModerationConsoleComponent', () => {
         { provide: ModBffService, useValue: bff },
         { provide: AdminBffService, useValue: admin },
         { provide: SessionService, useValue: { isAdmin } },
-        { provide: MfaService, useValue: mfa },
+        { provide: LOGIN_STEP_UP_LOADER, useValue: loader },
         // The block result links to its moderation request with a RELATIVE RouterLink
         // (decision 84d), so the console now needs a router in scope.
         provideRouter([]),
@@ -1274,23 +1305,38 @@ describe('ModerationConsoleComponent', () => {
     });
   });
   /**
-   * hugmesh-mod-ui#1 — the inline MFA step-up, wired but INERT.
+   * hugmesh-mod-ui#1 — the MFA step-up loop, with login-ui's federated challenge
+   * (decisions 21/35) rendered in place under the refused form.
    *
-   * The INERT half is pinned first and deliberately: against the denial
-   * hugmesh-mod-bff-api actually sends today (a bare @PreAuthorize 403 with no
-   * body and no X-Step-Up-Required header) nothing here may open a dialog. The
-   * rest of the suite then exercises the wiring against the signal the platform
-   * WILL send, so the UI half is reviewable before the server half exists.
+   * The negative is pinned first and deliberately: a BARE 403 (the privileged /
+   * self-target rule, or a plain user hitting an armed gate) must never open a
+   * challenge. The rest of the suite exercises the loop against the refusal an
+   * ARMED mod-bff sends (PR #18: `X-Step-Up-Required: X-Mod-StepUp`, or the
+   * "requires step-up" phrase). The gate ships dark, so a default deployment never
+   * sends it; a human challenge on an armed mesh stays a manual test.
    */
   describe('MFA step-up (hugmesh-mod-ui#1)', () => {
-    /** The signal admin-bff stamps; mod-bff sends none of this yet. */
-    const SIGNAL = 'X-ImageGen-StepUp';
+    /** The signal an ARMED mod-bff stamps (ModStepUpGate.STEP_UP_HEADER). */
+    const SIGNAL = 'X-Mod-StepUp';
 
+    /** The console's step-up offers (one per stalled form, at most one at a time). */
     function dialogs(): NodeListOf<HTMLElement> {
-      return fixture.nativeElement.querySelectorAll('[data-testid="mfa-stepup-dialog"]');
+      return fixture.nativeElement.querySelectorAll('[data-testid="mfa-stepup-host"]');
     }
 
-    it('does NOT open the dialog for the bare 403 mod-bff sends today', async () => {
+    /** Let the wrapper's on-demand load resolve and the fake challenge render. */
+    async function settle(): Promise<void> {
+      fixture.detectChanges();
+      await fixture.whenStable();
+      await Promise.resolve();
+      fixture.detectChanges();
+    }
+
+    function federated(): HTMLElement | null {
+      return fixture.nativeElement.querySelector('[data-testid="mfa-challenge-view"]');
+    }
+
+    it('does NOT open the dialog for a bare 403 (the privileged/self-target rule, or an unsignalled gate)', async () => {
       fixture.detectChanges();
       bff.ban.and.resolveTo(failed(403, 'Forbidden'));
       component.banTarget = 'bad-user';
@@ -1519,6 +1565,113 @@ describe('ModerationConsoleComponent', () => {
       component.stepUpDismissed(false);
       expect(component.banError()).toContain('retry when you can confirm');
       expect(component.banError()).not.toContain('not enabled on this deployment');
+    });
+
+    /*
+     * Decisions 21/35: the challenge is login-ui's federated `./mfa-step-up`, loaded
+     * on demand from the hardcoded /login/remoteEntry.json and rendered IN PLACE
+     * under the refused form; a rejected load degrades to the ?returnTo= link.
+     */
+    describe('federated consumer (decisions 21/35)', () => {
+      it('loads login-ui\'s challenge only when a write is refused, and renders it under the BAN form', async () => {
+        fixture.detectChanges();
+        expect(loads).withContext('never at bootstrap').toBe(0);
+        bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.banTarget = 'bad-user';
+        await component.ban();
+        await settle();
+        await settle();
+        expect(loads).toBe(1);
+        expect(dialogs().length).toBe(1);
+        expect(federated()).not.toBeNull();
+        // In place: the offer sits in the ban section — after the ban form, before
+        // the domain-lock heading — not in a modal layer somewhere else.
+        const host = dialogs()[0];
+        const banForm: HTMLElement = fixture.nativeElement.querySelector('form[aria-labelledby="mc-ban-heading"]');
+        const nextHeading: HTMLElement = fixture.nativeElement.querySelector('#mc-domainlock-heading');
+        expect(banForm.compareDocumentPosition(host) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+        expect(host.compareDocumentPosition(nextHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      });
+
+      it('re-issues the identical snapshot exactly ONCE when the federated challenge reports satisfied', async () => {
+        fixture.detectChanges();
+        bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.banTarget = '@bad:evil.example';
+        await component.ban();
+        await settle();
+        await settle();
+        component.banTarget = 'someone-else';
+        bff.ban.calls.reset();
+        bff.ban.and.resolveTo(ok({ state: 'pending-reconcile' }));
+        FakeLoginMfaComponent.instances[0].satisfied.emit();
+        await settle();
+        await settle();
+        expect(bff.ban).toHaveBeenCalledTimes(1);
+        expect(bff.ban).toHaveBeenCalledWith(jasmine.objectContaining({ target: '@bad:evil.example' }));
+        expect(component.pendingStepUp()).toBeNull();
+        expect(dialogs().length).toBe(0);
+        expect(component.banNote()).toContain('pending reconcile');
+      });
+
+      it('a federated "Not now" leaves the write unapplied and says so', async () => {
+        fixture.detectChanges();
+        bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.banTarget = 'bad-user';
+        await component.ban();
+        await settle();
+        await settle();
+        bff.ban.calls.reset();
+        FakeLoginMfaComponent.instances[0].dismissed.emit();
+        await settle();
+        expect(bff.ban).not.toHaveBeenCalled();
+        expect(component.pendingStepUp()).toBeNull();
+        expect(component.banError()).toContain('Nothing was changed');
+        expect(component.banError()).toContain('retry when you can confirm');
+      });
+
+      it('a dark MFA surface keeps a closable notice on screen, then says to escalate', async () => {
+        fixture.detectChanges();
+        bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.banTarget = 'bad-user';
+        await component.ban();
+        await settle();
+        await settle();
+        FakeLoginMfaComponent.instances[0].unavailable.emit();
+        await settle();
+        // Still pending and still on screen: a second gated write is refused in words.
+        expect(component.pendingStepUp()?.form).toBe('ban');
+        const notice = fixture.nativeElement.querySelector('[data-testid="mfa-stepup-dark"]');
+        expect(notice).not.toBeNull();
+        bff.block.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.target = 'evil.example';
+        await component.block();
+        expect(component.blockError()).toContain('already open');
+        // Closing the notice reports dark, so the console says to escalate, not retry.
+        fixture.nativeElement.querySelector('[data-testid="mfa-stepup-close"]').click();
+        await settle();
+        expect(component.pendingStepUp()).toBeNull();
+        expect(component.banError()).toContain('not enabled on this deployment');
+        expect(component.banError()).toContain('ask an administrator');
+        expect(dialogs().length).toBe(0);
+      });
+
+      it('degrades to the /login/mfa/challenge?returnTo= link when the remote cannot be loaded', async () => {
+        loaderRejects = true;
+        fixture.detectChanges();
+        bff.ban.and.resolveTo(failed(403, 'Forbidden', null, SIGNAL));
+        component.banTarget = 'bad-user';
+        await component.ban();
+        await settle();
+        await settle();
+        expect(loads).toBe(1);
+        expect(federated()).toBeNull();
+        const link: HTMLAnchorElement | null = fixture.nativeElement.querySelector('[data-testid="mfa-stepup-link"]');
+        expect(link).not.toBeNull();
+        expect(link!.getAttribute('href')).toMatch(/^\/login\/mfa\/challenge\?returnTo=/);
+        // The write stays held, unapplied, while the link is offered.
+        expect(component.pendingStepUp()?.form).toBe('ban');
+        expect(bff.ban).toHaveBeenCalledTimes(1);
+      });
     });
   });
 });

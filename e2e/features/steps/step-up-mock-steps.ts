@@ -12,8 +12,8 @@
 // vocabulary of mfa-step-up-writes.feature ("the MFA step-up gate is armed on
 // this stack" / "sees the step-up challenge dialog"), which is a different lane.
 //
-// Dialog locators accept both the inline port's `mfa-stepup-*` testids and
-// login-ui's federated `mfa-challenge-*` ones (see the feature's header).
+// Dialog locators accept both login-ui's federated `mfa-challenge-*` testids and
+// the console wrapper's own `mfa-stepup-*` states (see the feature's header).
 
 import { Route, expect } from '@playwright/test';
 import { Given, When, Then } from '../support/fixtures';

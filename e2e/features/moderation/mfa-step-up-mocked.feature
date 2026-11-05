@@ -1,9 +1,12 @@
 # hugmesh-mod-ui#1 — the MFA step-up LOOP on the three sensitive writes, driven
 # against a MOCKED mod-bff so it runs on a DEFAULT stack (MFA dark, gate unarmed).
 #
-# RE-CHECKED against origin/main before writing (2026-09-23):
-#   - mod-ui f15a6ca: <hug-mfa-step-up-dialog> is wired under the ban / domain-lock
-#     / block forms (PR #17). offerStepUp() stores the EXACT request snapshot,
+# RE-CHECKED against origin/main before writing (2026-09-23; consumer 2026-11-04):
+#   - mod-ui: <hug-mod-step-up> is wired under the ban / domain-lock / block
+#     forms. It loads login-ui's federated `./mfa-step-up` in place from the
+#     HARDCODED /login/remoteEntry.json (src/app/mfa/mfa-step-up.ts, decisions
+#     21/35) and degrades to the /login/mfa/challenge?returnTo= link when that
+#     load is rejected. offerStepUp() stores the EXACT request snapshot,
 #     stepUpSatisfied() re-issues it once, token-less; stepUpDismissed() says
 #     plainly that nothing was changed (moderation-console.component.ts).
 #   - mod-bff-api d5551c4 (PR #18, 2026-09-18; still on main at a036b55): an
@@ -23,23 +26,27 @@
 # have. A BARE 403 (the privileged-target / self / cross-tenant rule on these same
 # endpoints) must NEVER pop the challenge; that negative is asserted, not assumed.
 #
-# Dialog locators in the LOOP rows accept BOTH the inline port's `mfa-stepup-*`
-# testids and login-ui's federated `mfa-challenge-*` ones (login-ui PR #24,
-# `./mfa-step-up`), so the loop contract stays true across issue #1's remaining
-# box. That tolerance means those rows cannot tell whether the box is done, so
-# two `@fixme` rows at the end pin the box itself (generator#347 decisions 21/35,
-# operator 2026-09-17): the console must load `./mfa-step-up` from the HARDCODED
+# Dialog locators in the LOOP rows accept BOTH login-ui's federated
+# `mfa-challenge-*` testids (login-ui PR #24, `./mfa-step-up`) and the console's
+# own `mfa-stepup-*` wrapper states (the dark notice and its Close, the degraded
+# link), so the loop contract reads the same whichever surface is on screen.
+# The two rows at the end pin the consumer itself (generator#347 decisions 21/35,
+# operator 2026-09-17): the console loads `./mfa-step-up` from the HARDCODED
 # `/login/remoteEntry.json` in place — asserted with ONLY `mfa-challenge-*`
-# testids, which today's inline dialog does not render — and, when that load is
-# rejected, degrade to a `/login/mfa/challenge?returnTo=` link, which does not
-# exist here today. Both turn green, unmodified, the day the box merges. The
-# federated component makes no /bff/mfa call on mount, so it renders even while
-# MFA ships dark. Completing a REAL challenge is not scripted (no persona carries
-# a TOTP secret); the challenge endpoint is mocked to accept.
+# testids, which only login-ui's component renders — and, when that load is
+# rejected, degrades to a `/login/mfa/challenge?returnTo=` link. They were
+# `@fixme` until the consumer landed; they run unmodified now. The federated
+# component makes no /bff/mfa call on mount, so it renders even while MFA ships
+# dark. Completing a REAL challenge is not scripted (no persona carries a TOTP
+# secret); the challenge endpoint is mocked to accept.
 #
-# @cluster: the host shell must serve this remote. A seeded session primes the
-# modGuard; the writes and the MFA surface are mocked, so no bff_ cookie is
-# needed and the console's own queue/audit reads may 401 harmlessly.
+# @cluster: the host shell must serve this remote AND the login remote (the
+# federated challenge is fetched from /login/remoteEntry.json). A seeded session
+# primes the modGuard; the writes and the MFA surface are mocked, so no bff_
+# cookie is needed and the console's own queue/audit reads may 401 harmlessly.
+# Proven 2026-11-04 on a scratch static gateway serving host-shell, mod-ui
+# (--base-href=/mod/) and login-ui (--base-href=/login/) production builds, with
+# /bff/** answering 401 and /api/** 404: 9 passed.
 @cluster @mod-ui @issue:mod-ui-1
 Feature: The step-up loop on sensitive moderation writes, against the documented wire contract
   As the moderation console
@@ -111,7 +118,6 @@ Feature: The step-up loop on sensitive moderation writes, against the documented
     Then the "ban" write has been sent exactly once so far
     And "mod-domain-a" sees the "ban" form report that nothing was changed
 
-  @fixme
   Scenario: the step-up refusal loads login-ui's federated challenge in place
     Given "mod-domain-a" has a seeded session
     And the mod-bff will refuse the next "ban" write demanding a step-up
@@ -121,7 +127,6 @@ Feature: The step-up loop on sensitive moderation writes, against the documented
     And "mod-domain-a" sees the federated login-ui MFA challenge in place
     And the "ban" write has been sent exactly once so far
 
-  @fixme
   Scenario: when the login remote entry cannot be fetched, the refusal degrades to the returnTo link
     Given "mod-domain-a" has a seeded session
     And the login remote entry cannot be fetched by "mod-domain-a"
