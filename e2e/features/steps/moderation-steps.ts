@@ -359,11 +359,15 @@ Given('the MFA step-up gate is armed on this stack', async ({ $testInfo }) => {
 
 Then('{string} sees the step-up challenge dialog', async ({ user }, username: string) => {
   const page = pageOf(user(username).username);
-  const dialog = page.locator('[data-testid="mfa-stepup-dialog"]');
+  // The console mounts login-ui's federated challenge (`mfa-challenge-*`,
+  // login-ui's exposed ./mfa-step-up) under the refused form; `mfa-stepup-host`
+  // is the console's own wrapper around it (decisions 21/35).
+  const dialog = page.locator('[data-testid="mfa-challenge-view"]');
   await expect(dialog).toBeVisible();
-  // The dialog opens on the verify form (mfa-stepup-intro). It switches to the
-  // "not enabled yet" message (mfa-stepup-dark) only after a challenge call
-  // comes back dark, which this step does not make.
-  await expect(page.locator('[data-testid="mfa-stepup-intro"]')).toBeVisible();
-  await expect(page.locator('[data-testid="mfa-stepup-dark"]')).not.toBeVisible();
+  // The challenge opens on the verify form (mfa-challenge-intro). It switches to
+  // the "not enabled yet" message (mfa-challenge-dark, then the wrapper's own
+  // mfa-stepup-dark notice) only after a challenge call comes back dark, which
+  // this step does not make.
+  await expect(page.locator('[data-testid="mfa-challenge-intro"]')).toBeVisible();
+  await expect(page.locator('[data-testid="mfa-challenge-dark"], [data-testid="mfa-stepup-dark"]')).toHaveCount(0);
 });

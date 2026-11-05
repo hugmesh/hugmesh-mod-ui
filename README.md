@@ -487,8 +487,9 @@ checkout to use `make pentest-dast` locally.
   disabled-with-helptext controls; the shared `accessibleName()` and alert+status accessibility
   pattern; full keyboard navigation; Karma unit coverage with JUnit reporting; the four-stage
   test/e2e/build/pentest GitLab pipeline; the baseline nginx security headers and nonce-based CSP;
-  and the MFA step-up dialog (detection and re-issue are unit-tested; no human has driven a real
-  challenge from this console).
+  and the MFA step-up consumer (detection, the federated challenge loaded in place, the
+  `returnTo` degrade and the re-issue are unit-tested and proven in the mocked e2e lane; no human
+  has driven a real challenge from this console).
 - **`modGuard` is on every route.** All three `MOD_ROUTES` entries (`src/app/mod.routes.ts`) set
   `canActivate: [modGuard]`, so the standalone dev shell gets the same client-side role check as
   the host-federated build, for `/mod`, `/mod/console` and `/mod/findings`. It is
@@ -496,7 +497,8 @@ checkout to use `make pentest-dast` locally.
   gate.
 - **Authentication model:** see [Authentication model](#authentication-model). This remote is a
   tenant-agnostic Angular application. Its backend calls are `/bff/mod/**`, the admin-bff decide
-  endpoint (`/bff/admin/moderation/{id}/decide`) and, for the step-up dialog, `/bff/mfa/*`.
+  endpoint (`/bff/admin/moderation/{id}/decide`); the step-up challenge it embeds is login-ui's,
+  and login-ui's own client calls `/bff/mfa/*`.
 - **Typed API client (shipped):** `ng-openapi-gen` is configured, `openapi.json` and the generated
   `src/app/api` client are committed, and `ModBffService` delegates every call to the generated
   `ModeratorService`.
@@ -515,14 +517,28 @@ checkout to use `make pentest-dast` locally.
   a step-up refusal is a `403` with `X-Step-Up-Required: X-Mod-StepUp` and a body containing
   `requires step-up`. Every other denial keeps its old bare shape.
   **This remote** (#1): `src/app/mfa/` holds a detection predicate over `ModWriteError`
-  (`step-up-error.ts`; header or phrase, on 403 or 428), a trimmed `MfaService` for
-  `POST /bff/mfa/challenge` and `POST /bff/mfa/assert/webauthn/options`, and
-  `MfaStepUpDialogComponent` ported from admin-ui. The console opens the dialog inline under the
-  refused form and re-issues the SAME request snapshot once the challenge succeeds. Cancelling
-  says plainly that nothing was applied. Closing it because the deployment has MFA switched off
-  says to escalate, not retry. The dialog is inline, not modal, so the other forms stay live
-  while one write waits. At most one challenge is open at a time; a second gated write is refused
-  with a message naming the one to finish first.
+  (`step-up-error.ts`; header or phrase, on 403 or 428), the decision-21/35 consumer of
+  login-ui's federated challenge (`mfa-step-up.ts`: ONE hardcoded `LOGIN_REMOTE_ENTRY =
+  '/login/remoteEntry.json'`, pinned by its spec, and the loader) and the offer the console
+  renders under the refused form (`mod-step-up.component.ts`). The offer loads login-ui's
+  `./mfa-step-up` on demand and mounts it in place; when that load is rejected (the standalone
+  dev shell, a moved `login` row, a network error) it degrades to the
+  `/login/mfa/challenge?returnTo=<current url>` link, the decided permanent fallback. The console
+  re-issues the SAME request snapshot, exactly once, when the challenge reports satisfied.
+  Cancelling says plainly that nothing was applied. When the challenge reports the MFA surface
+  dark (503), the offer keeps a closable notice on screen and closing it says to escalate, not
+  retry. The offer is inline, not modal, so the other forms stay live while one write waits. At
+  most one challenge is open at a time; a second gated write is refused with a message naming
+  the one to finish first.
+  **How the module is loaded, and why not `loadRemoteModule`:** measured 2026-11-04, the
+  package's top-level `loadRemoteModule({ remoteEntry, … })` hangs silently when called from
+  inside a remote under the host shell (it awaits a module-scoped promise only its own copy's
+  `initFederation()` resolves, and a remote's `main.ts` never runs under the shell); a lazy
+  `initFederation({})` of this remote's own copy crashes on the shell's newer orchestrator
+  storage schema. The loader therefore goes through the es-module-shims import map the shell has
+  already committed: fetch the manifest, verify it is the `login` remote and exposes the module,
+  add one `/login/`-scoped map for the specifiers the shell's map lacks, import the exposed file.
+  The singletons (Angular, RxJS) resolve to the shell's copies. Details in `mfa-step-up.ts`.
   What made this writable was #14/#15: `ModBffService` no longer collapses write failures to
   `null`, so every write resolves to a `ModWriteResult` with the HTTP status, the response body
   and the `X-Step-Up-Required` header.
@@ -533,11 +549,12 @@ checkout to use `make pentest-dast` locally.
   manual test on a live mesh (#1). The mocked feature is tagged `@cluster`, so it is not in the
   default or CI run (see `e2e/README.md`). An armed-stack variant,
   `e2e/features/moderation/mfa-step-up-writes.feature`, checks that the dialog opens against a real
-  mod-bff; it is `@cluster` too and skips unless `MFA_STEPUP_ARMED=1`. The last box on #1, loading login-ui's federated
-  `./mfa-step-up` in place of the inline port, is pinned by two `@fixme` e2e rows.
-  The header comment in `step-up-error.ts`, other code comments and the unit spec in
-  `moderation-console.component.spec.ts` still describe the dialog as INERT against a server that
-  sends a bare 403. They predate mod-bff-api PR #18 and are due a refresh.
+  mod-bff; it is `@cluster` too and skips unless `MFA_STEPUP_ARMED=1`. The federated consumer
+  (the last box on #1) is pinned by the two e2e rows at the end of the mocked feature, which
+  lost their `@fixme` when it landed: proven on a scratch gateway serving the host shell, this
+  remote and login-ui as built images, 9 of 9 rows. The live arming
+  (`app.mfa.enforce-sensitive-writes` plus `app.casdoor.mfa.enabled`) and a human challenge
+  stay the manual test.
 - 🔭 **Server-wide block, real backend for Mastodon.** The Mastodon (akkoma) leg is wired to
   confirmed `pleroma-admin` verbs but ships dark behind `external.mastodon.enabled`. Turning it on
   is an operations task, not a UI change; this console already shows the honest `external`

@@ -12,8 +12,8 @@
 // vocabulary of mfa-step-up-writes.feature ("the MFA step-up gate is armed on
 // this stack" / "sees the step-up challenge dialog"), which is a different lane.
 //
-// Dialog locators accept both the inline port's `mfa-stepup-*` testids and
-// login-ui's federated `mfa-challenge-*` ones (see the feature's header).
+// Dialog locators accept both login-ui's federated `mfa-challenge-*` testids and
+// the console wrapper's own `mfa-stepup-*` states (see the feature's header).
 
 import { Route, expect } from '@playwright/test';
 import { Given, When, Then } from '../support/fixtures';
@@ -51,6 +51,8 @@ function kindOf(raw: string): WriteKind {
   throw new Error(`Unknown write kind "${raw}" — one of ban, block, domain-lock`);
 }
 
+// `mfa-stepup-dialog` was the inline port's root (removed 2026-11-04); kept in the
+// alternation so a stale build still fails on the ASSERTIONS, not on a selector.
 const DIALOG = '[data-testid="mfa-stepup-dialog"], [data-testid="mfa-challenge-view"]';
 const INTRO = '[data-testid="mfa-stepup-intro"], [data-testid="mfa-challenge-intro"]';
 const DARK = '[data-testid="mfa-stepup-dark"], [data-testid="mfa-challenge-dark"]';
@@ -145,7 +147,9 @@ Given('the MFA challenge endpoint will accept any code', async ({}) => {
 Given('the MFA surface answers dark', async ({}) => {
   const username = [...pageRegistry.keys()].pop();
   if (!username) throw new Error('No page registered — add a session step first.');
-  // app.casdoor.mfa.enabled=false: every /bff/mfa/* answers 503 (MfaService.DARK_STATUS).
+  // app.casdoor.mfa.enabled=false: every /bff/mfa/* answers 503; login-ui's
+  // federated challenge reports it as `unavailable` and the console's wrapper
+  // renders its own closable `mfa-stepup-dark` notice.
   await pageOf(username).route('**/bff/mfa/**', (route) =>
     route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'MFA is not enabled' }) }),
   );

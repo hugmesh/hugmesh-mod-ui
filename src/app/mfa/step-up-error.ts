@@ -4,30 +4,20 @@ export { STEP_UP_SIGNAL_HEADER };
 
 /**
  * Recognises the platform's "this write needs a fresh MFA step-up" refusal, so the
- * moderation console can offer the inline challenge dialog instead of printing a
- * bare refusal.
+ * moderation console can offer login-ui's federated challenge
+ * ({@code mod-step-up.component.ts}) instead of printing a bare refusal.
  *
- * <h2>READ THIS FIRST: nothing can make this predicate fire today</h2>
- * hugmesh-mod-bff-api {@code origin/main} (86de22e, measured 2026-09-17) emits
- * NEITHER leg below. Its {@code ModStepUpGate} is a {@code @PreAuthorize}
- * conjunct — {@code "hasAnyRole('MOD','ADMIN') and
- * @modStepUpGate.satisfied(authentication)"} on the five sensitive endpoints
- * ({@code ModController.java} :200, :242, :264, :298, :329) — so a denial is a
- * bare Spring {@code AccessDeniedException} 403 with no body and no header.
- * Measured: {@code grep -rain 'Step-Up-Required|STEP_UP_REQUIRED|stepUpRequired'}
- * over that repo returns ZERO hits, and it has no {@code accessDeniedHandler}.
- * The gate also ships DARK ({@code app.mfa.enforce-sensitive-writes:false},
- * {@code SecurityConfig.java}:305), so today it returns true unconditionally and
- * denies nothing at all.
- *
- * <p>So this module, the {@code MfaService} beside it and the dialog they feed are
- * deliberately INERT: correct, tested, and unreachable until the server half
- * signals. That is the same shape hugmesh-superadmin-service-catalog-ui#11 landed
- * for its own gates. What UNBLOCKS it is one cross-repo change in
- * hugmesh-mod-bff-api — make the denial carry a signal, e.g. lift the step-up
- * conjunct out of {@code @PreAuthorize} into an explicit check throwing
- * {@code ApiException.forbidden("… requires step-up …")}, which the legacy leg
- * below already matches with NO release of this remote. See hugmesh-mod-ui#1.
+ * <h2>The emitter</h2>
+ * hugmesh-mod-bff-api signals since its PR #18 (d5551c4, 2026-09-18; closed #16):
+ * an ARMED {@code ModStepUpGate} refuses with 403 +
+ * {@code X-Step-Up-Required: X-Mod-StepUp} + {@code {"error":"<verb> requires
+ * step-up re-authentication (present X-Mod-StepUp)"}}
+ * ({@code ModStepUpAccessDeniedHandler}), so BOTH legs below have a real emitter.
+ * It signals only for a caller who passes the MOD/ADMIN role check; a plain user
+ * still gets a bare 403. The gate itself is behind
+ * {@code app.mfa.enforce-sensitive-writes} (default false), so a default
+ * deployment never refuses, and the loop is proven against a mocked refusal in
+ * {@code e2e/features/moderation/mfa-step-up-mocked.feature}. See hugmesh-mod-ui#1.
  *
  * <h2>The two legs</h2>
  * <ol>
