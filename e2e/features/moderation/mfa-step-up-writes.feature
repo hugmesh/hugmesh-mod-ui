@@ -2,9 +2,11 @@
 #
 # RE-CHECKED against origin/main (f15a6ca) before writing this, because both
 # halves the issue asked for landed since the survey ran:
-#   - UI:      <hug-mfa-step-up-dialog> is wired under the ban / domain-lock /
-#              block forms (PR #17, 8f0154b) — moderation-console.component.ts
-#              offerStepUp()/stepUpSatisfied()/stepUpDismissed().
+#   - UI:      <hug-mod-step-up> is wired under the ban / domain-lock / block
+#              forms (PR #17's loop, 8f0154b; the federated consumer since
+#              2026-11-04): it mounts login-ui's ./mfa-step-up in place —
+#              moderation-console.component.ts offerStepUp()/stepUpSatisfied()/
+#              stepUpDismissed().
 #   - mod-bff: now stamps X-Step-Up-Required (hugmesh-mod-bff-api#16, PR #18,
 #              d5551c4c) instead of a bare 403.
 # What still ships DARK by default: mod-bff-api's SecurityConfig defaults

@@ -29,10 +29,12 @@ import { InjectionToken, OutputEmitterRef, Type } from '@angular/core';
  */
 export const LOGIN_REMOTE_ENTRY = '/login/remoteEntry.json';
 
-/** The object overload of `loadRemoteModule`: the shell parks every remote
- *  (`EAGER_REMOTES = []`), and only this form initialises the remote first. The
- *  two-argument form throws `Remote 'login' is not initialized` unless the user
- *  already visited /login this session. */
+/** The remoteEntry / remoteName / exposedModule triple the canonical recipe
+ *  (hugmesh-forum-ui#3) names. Consumed here by {@link createFederatedLoader},
+ *  NOT by the package's `loadRemoteModule` — see "HOW THE MODULE IS LOADED"
+ *  below for the measurement behind that. The shell parks every remote
+ *  (`EAGER_REMOTES = []`), so `login` is never registered until something fetches
+ *  this entry on demand. */
 export const LOGIN_STEP_UP_OPTIONS = {
   remoteEntry: LOGIN_REMOTE_ENTRY,
   remoteName: 'login',
