@@ -55,9 +55,7 @@
 
   button {
     background: var(--hug-accent);
-    // Text on the accent FILL: --hug-text (#e8e8f0) is 3.94:1 on #7c4dff (WCAG
-    // 1.4.3); white is 4.81:1. Same --hug-accent-on convention as forum/wiki.
-    color: var(--hug-accent-on, #ffffff);
+    color: var(--hug-text);
     border: 1px solid var(--hug-accent-soft);
     border-radius: t.$radius-sm;
     padding: 0.5rem 0.9rem;
